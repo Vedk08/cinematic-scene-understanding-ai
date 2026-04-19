@@ -1,51 +1,112 @@
 # 🎬 Cinematic Scene Understanding AI
 
-An AI/ML project that analyzes cinematic videos by extracting frames and understanding visual elements like shot type, lighting, color tone, and motion.
+An AI-powered system that analyzes video scenes through a **cinematic lens** — breaking down shot types, lighting, and color palettes to understand visual storytelling.
 
 ---
 
-## 🚀 Current Progress
+## 🚀 Project Overview
 
-### ✅ Phase 1: Video Ingestion & Frame Extraction
-- Upload video using Streamlit
-- Extract 5 frames using OpenCV
-- Display frames in a web app
+This project aims to answer:
 
-### ✅ Phase 2: Frame-Level Shot Classification (Prototype)
-- Use CLIP (zero-shot image classification)
-- Predict shot types:
-  - Close-up shot
-  - Medium shot
-  - Wide shot
+> *Can we teach AI to “see” like a filmmaker?*
 
----
+Instead of just detecting objects, this system focuses on:
 
-## 🧠 Project Vision
-
-This project aims to build an AI system that can understand cinematic language by analyzing:
-
-- Shot type (close-up, wide, etc.)
-- Lighting (low-key, high-key)
-- Color tone (warm, cold, desaturated)
-- Motion (static, handheld, tracking)
-- Scene-level storytelling patterns
+- 🎥 Shot composition (close-up, medium, wide)
+- 💡 Lighting style (low-key, high-key, soft)
+- 🎨 Color palette & tone (warm, cool, stylized)
+- 📊 Frame-level → Scene-level understanding (coming next)
 
 ---
 
-## 🛠️ Tech Stack
+## 🧠 System Architecture
+
+The project combines:
+
+- **CLIP (Zero-shot learning)** → semantic understanding (shot type)
+- **Classical Computer Vision** → lighting analysis
+- **KMeans clustering** → color palette extraction
+
+👉 This hybrid approach avoids over-relying on deep models where simple vision techniques work better.
+
+---
+
+## 📦 Features (Current)
+
+### ✅ Phase 1 — Video Processing
+- Upload video via Streamlit
+- Extract frames using OpenCV
+
+---
+
+### ✅ Phase 2 — Shot Classification
+- Uses **CLIP (openai/clip-vit-base-patch32)**
+- Zero-shot classification:
+  - close-up
+  - medium shot
+  - wide shot
+
+---
+
+### ✅ Phase 3A — Lighting Analysis
+- Uses **image statistics instead of ML**
+- Extracts:
+  - mean brightness
+  - contrast
+  - dark pixel ratio
+
+- Classifies:
+  - low-key lighting
+  - high-key lighting
+  - soft lighting
+  - neutral lighting
+
+👉 Key insight:  
+Lighting is a **low-level visual property**, not a semantic concept — better handled with CV than CLIP.
+
+---
+
+### ✅ Phase 3B — Color Palette & Tone
+- Extracts dominant colors using **KMeans clustering**
+- Displays palette visually (with separator UI)
+- Infers tone:
+  - warm
+  - cool
+  - neutral
+
+👉 This aligns the system closer to real cinematic analysis.
+
+---
+
+## 🖥️ Demo UI
+
+For each frame, the system outputs:
+
+- Shot type
+- Lighting style
+- Color tone
+- Dominant color palette
+
+Technical metrics are hidden under:
+> “See technical details”
+
+---
+
+## 🔧 Tech Stack
 
 - Python
 - Streamlit
 - OpenCV
+- NumPy
+- Scikit-learn (KMeans)
 - Hugging Face Transformers (CLIP)
-- PyTorch
 
 ---
 
-## ⚙️ How to Run
+## ⚙️ Setup
 
-### 1. Clone the repository
+### 1. Clone the repo
 
 ```bash
-git clone https://github.com/Vedk08/cinematic-scene-understanding-ai.git
+git clone https://github.com/YOUR_USERNAME/cinematic-scene-understanding-ai.git
 cd cinematic-scene-understanding-ai
