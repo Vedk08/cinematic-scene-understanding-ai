@@ -11,10 +11,8 @@ from sklearn.cluster import KMeans
 from transformers import pipeline
 
 
-st.title("🎬 Cinematic AI - Phase 4")
-st.write(
-    "Upload a video, extract 5 frames, analyze shot type, lighting, color palette, and generate a clip-level cinematic summary."
-)
+st.title("🎬 Cinematic Scene Understanding AI - Phase 5")
+st.write("Analyze either a video clip or a single film still / photograph.")
 
 
 @st.cache_resource
@@ -37,31 +35,23 @@ def extract_frames(video_path, num_frames=5):
         cap.release()
         return frames
 
-    if num_frames == 1:
-        frame_indices = [total_frames // 2]
-    else:
-        frame_indices = [
-            int(i * (total_frames - 1) / (num_frames - 1))
-            for i in range(num_frames)
-        ]
+    frame_indices = [
+        int(i * (total_frames - 1) / (num_frames - 1))
+        for i in range(num_frames)
+    ]
 
     for idx in frame_indices:
         cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
         success, frame = cap.read()
         if success:
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frames.append(frame_rgb)
+            frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
     cap.release()
     return frames
 
 
 def classify_shot(image, classifier):
-    labels = [
-        "close-up shot",
-        "medium shot",
-        "wide shot"
-    ]
+    labels = ["close-up shot", "medium shot", "wide shot"]
     return classifier(
         image,
         candidate_labels=labels,
@@ -106,7 +96,7 @@ def extract_colors(frame, k=6):
 
 
 def rgb_to_hex(c):
-    return '#%02x%02x%02x' % tuple(c)
+    return "#%02x%02x%02x" % tuple(c)
 
 
 def analyze_color_tone(colors, percentages):
@@ -125,7 +115,7 @@ def analyze_color_tone(colors, percentages):
         return "neutral"
 
 
-def show_palette(colors, percentages, height=70):
+def show_palette(colors, percentages, height=65):
     html = f"""
     <div style="
         display:flex;
@@ -158,23 +148,14 @@ def show_palette(colors, percentages, height=70):
 
 
 def simplify_hex_names(colors):
-    """
-    Very lightweight descriptive naming based on dominant RGB channel.
-    """
     names = []
     for r, g, b in colors:
         if r < 35 and g < 35 and b < 35:
             names.append("deep black")
         elif b > r + 30 and b > g:
-            if g > 100:
-                names.append("teal-blue")
-            else:
-                names.append("blue")
+            names.append("blue" if g < 100 else "teal-blue")
         elif r > b + 30 and r > g:
-            if g > 120:
-                names.append("amber")
-            else:
-                names.append("red-orange")
+            names.append("amber" if g > 120 else "red-orange")
         elif g > r and g > b:
             names.append("green")
         elif abs(r - b) < 20 and r > 100 and b > 100:
@@ -186,24 +167,41 @@ def simplify_hex_names(colors):
     return names
 
 
+def analyze_single_frame(frame, classifier):
+    image = Image.fromarray(frame)
+
+    shot_results = classify_shot(image, classifier)
+    shot = shot_results[0]["label"]
+    shot_score = shot_results[0]["score"]
+
+    lighting, mean, contrast, dark = analyze_lighting(frame)
+    colors, percentages = extract_colors(frame, k=6)
+    tone = analyze_color_tone(colors, percentages)
+
+    return {
+        "frame": frame,
+        "shot_results": shot_results,
+        "shot": shot,
+        "shot_score": shot_score,
+        "lighting": lighting,
+        "mean_brightness": mean,
+        "contrast": contrast,
+        "dark_ratio": dark,
+        "colors": [tuple(map(int, c)) for c in colors],
+        "proportions": [float(p) for p in percentages],
+        "tone": tone,
+    }
+
+
 def aggregate_clip_palette(frame_results, num_colors=6):
-    """
-    Combine all frame palettes into one clip-level palette.
-    """
     all_colors = []
+
     for result in frame_results:
         for color, proportion in zip(result["colors"], result["proportions"]):
             repeat_count = max(1, int(proportion * 100))
             all_colors.extend([color] * repeat_count)
 
     all_colors = np.array(all_colors, dtype=np.uint8)
-
-    if len(all_colors) < num_colors:
-        unique_colors = all_colors.tolist()
-        while len(unique_colors) < num_colors:
-            unique_colors.append((0, 0, 0))
-        proportions = [1 / num_colors] * num_colors
-        return unique_colors[:num_colors], proportions
 
     kmeans = KMeans(n_clusters=num_colors, n_init=10, random_state=42)
     labels = kmeans.fit_predict(all_colors)
@@ -220,9 +218,6 @@ def aggregate_clip_palette(frame_results, num_colors=6):
 
 
 def infer_mood(dominant_shot, dominant_lighting, dominant_tone):
-    """
-    Lightweight mood inference from dominant attributes.
-    """
     if dominant_lighting == "low-key dramatic lighting" and dominant_tone == "cool":
         return "moody, tense, and nocturnal"
     if dominant_lighting == "high-key lighting" and dominant_tone == "warm":
@@ -236,117 +231,134 @@ def infer_mood(dominant_shot, dominant_lighting, dominant_tone):
     return "cinematic and visually controlled"
 
 
-def generate_clip_summary(dominant_shot, dominant_lighting, dominant_tone, palette_names, mood):
+def generate_summary(dominant_shot, dominant_lighting, dominant_tone, palette_names, mood):
     palette_text = ", ".join(palette_names[:4])
     return (
-        f"This clip predominantly uses {dominant_shot}s, {dominant_lighting}, "
+        f"This visual predominantly uses {dominant_shot}, {dominant_lighting}, "
         f"and a {dominant_tone}-toned palette built around {palette_text}. "
-        f"Overall, the scene feels {mood}."
+        f"Overall, it feels {mood}."
     )
 
 
-uploaded_file = st.file_uploader("Upload video", type=["mp4", "mov", "avi", "mkv"])
+def display_frame_analysis(result):
+    st.image(result["frame"], caption="Analyzed frame", use_container_width=True)
 
-if uploaded_file is not None:
-    classifier = load_classifier()
+    st.write(f"**Shot:** {result['shot']}")
+    st.write(f"**Lighting:** {result['lighting']}")
+    st.write(f"**Color tone:** {result['tone']}")
+    st.write("**Dominant color palette:**")
+    show_palette(result["colors"], result["proportions"])
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
-        tmp.write(uploaded_file.read())
-        path = tmp.name
+    with st.expander("See technical details"):
+        st.write(f"**Shot confidence:** {result['shot_score']:.2f}")
+        st.write(f"**Mean brightness:** {result['mean_brightness']:.1f}")
+        st.write(f"**Contrast:** {result['contrast']:.1f}")
+        st.write(f"**Dark pixel ratio:** {result['dark_ratio']:.2f}")
 
-    st.video(uploaded_file)
-    st.success("Video uploaded successfully!")
+        hex_codes = [rgb_to_hex(c) for c in result["colors"]]
+        st.write("**Palette HEX:**", " | ".join(hex_codes))
 
-    frames = extract_frames(path, num_frames=5)
+        st.write("**All shot scores:**")
+        for shot_result in result["shot_results"]:
+            st.write(f"- {shot_result['label']}: {shot_result['score']:.3f}")
 
-    if frames:
-        st.subheader("Clip-Level Summary")
 
-        frame_results = []
+classifier = load_classifier()
 
-        for frame in frames:
-            image = Image.fromarray(frame)
+mode = st.radio(
+    "Choose analysis mode:",
+    ["Analyze Video Clip", "Analyze Single Still / Photo"]
+)
 
-            shot_results = classify_shot(image, classifier)
-            shot = shot_results[0]["label"]
 
-            lighting, mean, contrast, dark = analyze_lighting(frame)
-            colors, perc = extract_colors(frame, k=6)
-            tone = analyze_color_tone(colors, perc)
+if mode == "Analyze Video Clip":
+    uploaded_video = st.file_uploader(
+        "Upload video",
+        type=["mp4", "mov", "avi", "mkv"]
+    )
 
-            frame_results.append({
-                "frame": frame,
-                "shot_results": shot_results,
-                "shot": shot,
-                "lighting": lighting,
-                "mean_brightness": mean,
-                "contrast": contrast,
-                "dark_ratio": dark,
-                "colors": [tuple(map(int, c)) for c in colors],
-                "proportions": [float(p) for p in perc],
-                "tone": tone,
-            })
+    if uploaded_video is not None:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
+            tmp.write(uploaded_video.read())
+            path = tmp.name
 
-        dominant_shot = Counter([r["shot"] for r in frame_results]).most_common(1)[0][0]
-        dominant_lighting = Counter([r["lighting"] for r in frame_results]).most_common(1)[0][0]
-        dominant_tone = Counter([r["tone"] for r in frame_results]).most_common(1)[0][0]
+        st.video(uploaded_video)
+        st.success("Video uploaded successfully!")
 
-        clip_colors, clip_proportions = aggregate_clip_palette(frame_results, num_colors=6)
-        palette_names = simplify_hex_names(clip_colors)
-        mood = infer_mood(dominant_shot, dominant_lighting, dominant_tone)
-        clip_summary = generate_clip_summary(
-            dominant_shot, dominant_lighting, dominant_tone, palette_names, mood
-        )
+        frames = extract_frames(path, num_frames=5)
 
-        col1, col2 = st.columns([1.2, 1])
+        if frames:
+            frame_results = [analyze_single_frame(frame, classifier) for frame in frames]
 
-        with col1:
-            st.write(f"**Dominant shot type:** {dominant_shot}")
-            st.write(f"**Dominant lighting:** {dominant_lighting}")
-            st.write(f"**Dominant color tone:** {dominant_tone}")
-            st.write(f"**Overall mood:** {mood}")
+            st.subheader("Clip-Level Summary")
 
-        with col2:
-            st.write("**Clip palette:**")
-            show_palette(clip_colors, clip_proportions, height=50)
-            st.markdown("<div style='margin-top:10px'></div>", unsafe_allow_html=True)
+            dominant_shot = Counter([r["shot"] for r in frame_results]).most_common(1)[0][0]
+            dominant_lighting = Counter([r["lighting"] for r in frame_results]).most_common(1)[0][0]
+            dominant_tone = Counter([r["tone"] for r in frame_results]).most_common(1)[0][0]
 
-            st.write("**Palette colors:**")
-            st.code(" | ".join([rgb_to_hex(c) for c in clip_colors]))
+            clip_colors, clip_proportions = aggregate_clip_palette(frame_results)
+            palette_names = simplify_hex_names(clip_colors)
+            mood = infer_mood(dominant_shot, dominant_lighting, dominant_tone)
+            summary = generate_summary(
+                dominant_shot,
+                dominant_lighting,
+                dominant_tone,
+                palette_names,
+                mood
+            )
 
-        st.write("**Scene summary:**")
-        st.info(clip_summary)
+            col1, col2 = st.columns([1.2, 1])
 
-        st.markdown("---")
-        st.subheader("Frame-by-Frame Analysis")
+            with col1:
+                st.write(f"**Dominant shot type:** {dominant_shot}")
+                st.write(f"**Dominant lighting:** {dominant_lighting}")
+                st.write(f"**Dominant color tone:** {dominant_tone}")
+                st.write(f"**Overall mood:** {mood}")
 
-        for i, result in enumerate(frame_results):
-            frame = result["frame"]
-            st.image(frame, caption=f"Frame {i+1}", use_container_width=True)
+            with col2:
+                st.write("**Clip palette:**")
+                show_palette(clip_colors, clip_proportions, height=55)
 
-            st.write(f"**Shot:** {result['shot']}")
-            st.write(f"**Lighting:** {result['lighting']}")
-            st.write(f"**Color tone:** {result['tone']}")
-            st.write("**Dominant color palette:**")
-            show_palette(result["colors"], result["proportions"])
-
-            with st.expander("See technical details"):
-                top_shot_score = result["shot_results"][0]["score"]
-                st.write(f"**Shot confidence:** {top_shot_score:.2f}")
-                st.write(f"**Mean brightness:** {result['mean_brightness']:.1f}")
-                st.write(f"**Contrast:** {result['contrast']:.1f}")
-                st.write(f"**Dark pixel ratio:** {result['dark_ratio']:.2f}")
-
-                hex_codes = [rgb_to_hex(c) for c in result["colors"]]
-                st.write("**Palette HEX:**", " | ".join(hex_codes))
-
-                st.write("**All shot scores:**")
-                for shot_result in result["shot_results"]:
-                    st.write(f"- {shot_result['label']}: {shot_result['score']:.3f}")
+            st.write("**Scene summary:**")
+            st.info(summary)
 
             st.markdown("---")
+            st.subheader("Frame-by-Frame Analysis")
 
-    else:
-        st.error("Could not extract frames from this video.")
+            for i, result in enumerate(frame_results):
+                st.write(f"### Frame {i + 1}")
+                display_frame_analysis(result)
+                st.markdown("---")
+        else:
+            st.error("Could not extract frames from this video.")
 
-    os.remove(path)
+        os.remove(path)
+
+
+if mode == "Analyze Single Still / Photo":
+    uploaded_image = st.file_uploader(
+        "Upload still / photo",
+        type=["jpg", "jpeg", "png", "webp"]
+    )
+
+    if uploaded_image is not None:
+        image = Image.open(uploaded_image).convert("RGB")
+        frame = np.array(image)
+
+        result = analyze_single_frame(frame, classifier)
+
+        palette_names = simplify_hex_names(result["colors"])
+        mood = infer_mood(result["shot"], result["lighting"], result["tone"])
+        summary = generate_summary(
+            result["shot"],
+            result["lighting"],
+            result["tone"],
+            palette_names,
+            mood
+        )
+
+        st.subheader("Still / Photo Analysis")
+        display_frame_analysis(result)
+
+        st.write("**Visual summary:**")
+        st.info(summary)
