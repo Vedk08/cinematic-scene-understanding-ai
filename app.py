@@ -12,9 +12,9 @@ from transformers import pipeline
 from ultralytics import YOLO
 
 
-st.title("🎬 Cinematic Scene Understanding AI - Phase 6.3")
+st.title("🎬 Cinematic Scene Understanding AI - Phase 7.1")
 st.write(
-    "Analyze video clips or stills for shot type, lighting, color, subject placement, objects, and composition using YOLO."
+    "Analyze video clips or stills for shot type, lighting, color, composition, objects, and blocking dynamics."
 )
 
 
@@ -198,10 +198,6 @@ def simplify_hex_names(colors):
 
 
 def detect_objects_yolo(frame, yolo_model, confidence_threshold=0.25):
-    """
-    Detect objects using YOLO.
-    Returns detections as dictionaries.
-    """
     results = yolo_model.predict(frame, conf=confidence_threshold, verbose=False)
     detections = []
 
@@ -273,6 +269,108 @@ def analyze_symmetry(frame, quality_status):
         label = "asymmetrical composition"
 
     return label, float(symmetry_score)
+
+
+def analyze_blocking(frame, detections, quality_status):
+    h, w, _ = frame.shape
+    frame_diagonal = np.sqrt(w ** 2 + h ** 2)
+
+    if quality_status != "usable":
+        return {
+            "blocking_type": "blocking unavailable due to poor frame quality",
+            "relationship": "unavailable",
+            "dominance": "unavailable",
+            "depth": "unavailable",
+            "blocking_summary": "Blocking analysis is unavailable because the frame quality is too poor.",
+        }
+
+    people = get_person_detections(detections)
+
+    if len(people) == 0:
+        return {
+            "blocking_type": "no human blocking detected",
+            "relationship": "no people detected",
+            "dominance": "unavailable",
+            "depth": "environment-focused frame",
+            "blocking_summary": "No clear human subjects were detected, so the frame reads more as an environment or object-focused composition.",
+        }
+
+    if len(people) == 1:
+        box = people[0]["box"]
+        x, y, bw, bh = box
+        area_ratio = (bw * bh) / (w * h)
+
+        if area_ratio > 0.30:
+            dominance = "single dominant subject"
+            depth = "foreground-heavy subject presence"
+        elif area_ratio > 0.12:
+            dominance = "clear primary subject"
+            depth = "moderate subject presence"
+        else:
+            dominance = "small subject within environment"
+            depth = "environment-dominant staging"
+
+        return {
+            "blocking_type": "single-subject blocking",
+            "relationship": "one person staged alone",
+            "dominance": dominance,
+            "depth": depth,
+            "blocking_summary": f"The frame uses single-subject blocking with {dominance}, suggesting focus on an individual presence within the scene.",
+        }
+
+    people_sorted = sorted(
+        people,
+        key=lambda d: d["box"][2] * d["box"][3],
+        reverse=True
+    )
+
+    p1 = people_sorted[0]
+    p2 = people_sorted[1]
+
+    x1, y1, w1, h1 = p1["box"]
+    x2, y2, w2, h2 = p2["box"]
+
+    c1 = np.array([x1 + w1 / 2, y1 + h1 / 2])
+    c2 = np.array([x2 + w2 / 2, y2 + h2 / 2])
+
+    distance = float(np.linalg.norm(c1 - c2) / frame_diagonal)
+
+    area1 = w1 * h1
+    area2 = w2 * h2
+    area_ratio = max(area1, area2) / max(min(area1, area2), 1)
+
+    if distance < 0.18:
+        relationship = "close spatial relationship"
+        blocking_type = "intimate / conversational blocking"
+    elif distance < 0.38:
+        relationship = "moderate spacing between characters"
+        blocking_type = "balanced two-person staging"
+    else:
+        relationship = "strong physical separation"
+        blocking_type = "separated / emotionally distant blocking"
+
+    if area_ratio > 2.0:
+        dominance = "one subject visually dominates the frame"
+    else:
+        dominance = "subjects have relatively balanced visual weight"
+
+    if area_ratio > 1.8:
+        depth = "foreground-background separation"
+    else:
+        depth = "similar depth plane"
+
+    blocking_summary = (
+        f"The frame contains {len(people)} detected people with {relationship}. "
+        f"{dominance}, creating {blocking_type}."
+    )
+
+    return {
+        "blocking_type": blocking_type,
+        "relationship": relationship,
+        "dominance": dominance,
+        "depth": depth,
+        "blocking_summary": blocking_summary,
+    }
 
 
 def analyze_composition(frame, detections, quality_status):
@@ -375,6 +473,26 @@ def draw_yolo_boxes(frame, detections):
     return annotated
 
 
+def draw_rule_of_thirds_grid(frame):
+    annotated = frame.copy()
+    h, w, _ = annotated.shape
+
+    x1 = w // 3
+    x2 = 2 * w // 3
+    y1 = h // 3
+    y2 = 2 * h // 3
+
+    line_color = (255, 255, 255)
+    thickness = max(2, w // 400)
+
+    cv2.line(annotated, (x1, 0), (x1, h), line_color, thickness)
+    cv2.line(annotated, (x2, 0), (x2, h), line_color, thickness)
+    cv2.line(annotated, (0, y1), (w, y1), line_color, thickness)
+    cv2.line(annotated, (0, y2), (w, y2), line_color, thickness)
+
+    return annotated
+
+
 def analyze_single_frame(frame, classifier, yolo_model):
     quality_status, _, _ = get_frame_quality(frame)
 
@@ -398,12 +516,8 @@ def analyze_single_frame(frame, classifier, yolo_model):
     else:
         detections = []
 
-    composition = analyze_composition(
-        frame,
-        detections,
-        quality_status
-    )
-
+    composition = analyze_composition(frame, detections, quality_status)
+    blocking = analyze_blocking(frame, detections, quality_status)
     symmetry_label, symmetry_score = analyze_symmetry(frame, quality_status)
 
     return {
@@ -420,6 +534,7 @@ def analyze_single_frame(frame, classifier, yolo_model):
         "proportions": [float(p) for p in percentages],
         "tone": tone,
         "composition": composition,
+        "blocking": blocking,
         "symmetry_label": symmetry_label,
         "symmetry_score": symmetry_score,
     }
@@ -477,7 +592,8 @@ def generate_summary(
     dominant_tone,
     palette_names,
     mood,
-    dominant_composition=None
+    dominant_composition=None,
+    dominant_blocking=None
 ):
     palette_text = ", ".join(palette_names[:4])
 
@@ -485,10 +601,43 @@ def generate_summary(
     if dominant_composition:
         composition_text = f" The framing often uses {dominant_composition}."
 
+    blocking_text = ""
+    if dominant_blocking:
+        blocking_text = f" The blocking suggests {dominant_blocking}."
+
     return (
         f"This visual predominantly uses {dominant_shot}, {dominant_lighting}, "
         f"and a {dominant_tone}-toned palette built around {palette_text}. "
-        f"Overall, it feels {mood}.{composition_text}"
+        f"Overall, it feels {mood}.{composition_text}{blocking_text}"
+    )
+
+
+def metric_card(title, value):
+    st.markdown(
+        f"""
+        <div style="
+            padding: 14px 16px;
+            border: 1px solid rgba(255,255,255,0.18);
+            border-radius: 12px;
+            margin-bottom: 12px;
+            background-color: rgba(255,255,255,0.04);
+        ">
+            <div style="
+                font-size: 13px;
+                opacity: 0.70;
+                margin-bottom: 4px;
+            ">
+                {title}
+            </div>
+            <div style="
+                font-size: 17px;
+                font-weight: 600;
+            ">
+                {value}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
     )
 
 
@@ -501,21 +650,43 @@ def display_frame_analysis(result):
         st.warning("This frame is very dark, so composition and subject detection may be unreliable.")
 
     composition = result["composition"]
+    blocking = result["blocking"]
 
-    st.write(f"**Shot:** {result['shot']}")
-    st.write(f"**Lighting:** {result['lighting']}")
-    st.write(f"**Color tone:** {result['tone']}")
-    st.write(f"**Composition:** {composition['composition_type']}")
-    st.write(f"**Subject placement:** {composition['subject_position']}")
-    st.write(f"**People detected:** {composition['person_count']}")
-    st.write(f"**Framing note:** {composition['framing_note']}")
-    st.write(f"**Balance:** {result['symmetry_label']}")
+    st.markdown("### Cinematic Breakdown")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        metric_card("Shot", result["shot"])
+        metric_card("Lighting", result["lighting"])
+        metric_card("Color Tone", result["tone"])
+        metric_card("Composition", composition["composition_type"])
+        metric_card("Subject Placement", composition["subject_position"])
+
+    with col2:
+        metric_card("People Detected", composition["person_count"])
+        metric_card("Framing Note", composition["framing_note"])
+        metric_card("Blocking", blocking["blocking_type"])
+        metric_card("Balance", result["symmetry_label"])
+
+    st.markdown("### Blocking Read")
+    st.info(blocking["blocking_summary"])
 
     if composition["object_labels"]:
-        st.write("**Other detected objects:**", ", ".join(sorted(set(composition["object_labels"]))))
+        st.markdown("### Other Detected Objects")
+        st.write(", ".join(sorted(set(composition["object_labels"]))))
 
-    st.write("**Dominant color palette:**")
+    st.markdown("### Dominant Color Palette")
     show_palette(result["colors"], result["proportions"])
+
+    if composition["composition_type"] == "rule-of-thirds composition":
+        with st.expander("Show rule-of-thirds grid"):
+            grid_image = draw_rule_of_thirds_grid(result["frame"])
+            st.image(
+                grid_image,
+                caption="Rule-of-thirds overlay",
+                use_container_width=True
+            )
 
     if composition["detections"]:
         with st.expander("Show YOLO detections"):
@@ -526,21 +697,33 @@ def display_frame_analysis(result):
                 use_container_width=True
             )
 
-    with st.expander("See technical details"):
-        st.write(f"**Frame quality:** {result['quality_status']}")
-        st.write(f"**Shot confidence:** {result['shot_score']:.2f}")
-        st.write(f"**Mean brightness:** {result['mean_brightness']:.1f}")
-        st.write(f"**Contrast:** {result['contrast']:.1f}")
-        st.write(f"**Dark pixel ratio:** {result['dark_ratio']:.2f}")
-        st.write(f"**Subject area ratio:** {composition['subject_area_ratio']:.3f}")
-        st.write(f"**Symmetry score:** {result['symmetry_score']:.1f}")
 
-        hex_codes = [rgb_to_hex(c) for c in result["colors"]]
-        st.write("**Palette HEX:**", " | ".join(hex_codes))
+def display_technical_details(result, frame_number=None):
+    if frame_number is not None:
+        st.write(f"### Frame {frame_number}")
 
-        st.write("**All shot scores:**")
-        for shot_result in result["shot_results"]:
-            st.write(f"- {shot_result['label']}: {shot_result['score']:.3f}")
+    composition = result["composition"]
+    blocking = result["blocking"]
+
+    st.write(f"**Frame quality:** {result['quality_status']}")
+    st.write(f"**Shot confidence:** {result['shot_score']:.2f}")
+    st.write(f"**Mean brightness:** {result['mean_brightness']:.1f}")
+    st.write(f"**Contrast:** {result['contrast']:.1f}")
+    st.write(f"**Dark pixel ratio:** {result['dark_ratio']:.2f}")
+    st.write(f"**Subject area ratio:** {composition['subject_area_ratio']:.3f}")
+    st.write(f"**Symmetry score:** {result['symmetry_score']:.1f}")
+    st.write(f"**Blocking relationship:** {blocking['relationship']}")
+    st.write(f"**Dominance:** {blocking['dominance']}")
+    st.write(f"**Depth cue:** {blocking['depth']}")
+
+    hex_codes = [rgb_to_hex(c) for c in result["colors"]]
+    st.write("**Palette HEX:**", " | ".join(hex_codes))
+
+    st.write("**All shot scores:**")
+    for shot_result in result["shot_results"]:
+        st.write(f"- {shot_result['label']}: {shot_result['score']:.3f}")
+
+    st.markdown("---")
 
 
 classifier = load_classifier()
@@ -599,6 +782,10 @@ if mode == "Analyze Video Clip":
                 [r["composition"]["composition_type"] for r in summary_source]
             ).most_common(1)[0][0]
 
+            dominant_blocking = Counter(
+                [r["blocking"]["blocking_type"] for r in summary_source]
+            ).most_common(1)[0][0]
+
             clip_colors, clip_proportions = aggregate_clip_palette(frame_results)
             palette_names = simplify_hex_names(clip_colors)
             mood = infer_mood(dominant_shot, dominant_lighting, dominant_tone)
@@ -609,7 +796,8 @@ if mode == "Analyze Video Clip":
                 dominant_tone,
                 palette_names,
                 mood,
-                dominant_composition
+                dominant_composition,
+                dominant_blocking
             )
 
             col1, col2 = st.columns([1.2, 1])
@@ -619,6 +807,7 @@ if mode == "Analyze Video Clip":
                 st.write(f"**Dominant lighting:** {dominant_lighting}")
                 st.write(f"**Dominant color tone:** {dominant_tone}")
                 st.write(f"**Dominant composition:** {dominant_composition}")
+                st.write(f"**Dominant blocking:** {dominant_blocking}")
                 st.write(f"**Overall mood:** {mood}")
 
             with col2:
@@ -629,12 +818,25 @@ if mode == "Analyze Video Clip":
             st.info(summary)
 
             st.markdown("---")
-            st.subheader("Frame-by-Frame Analysis")
 
-            for i, result in enumerate(frame_results):
-                st.write(f"### Frame {i + 1}")
-                display_frame_analysis(result)
-                st.markdown("---")
+            analysis_tab, technical_tab = st.tabs([
+                "Cinematic Analysis",
+                "Technical Details"
+            ])
+
+            with analysis_tab:
+                st.subheader("Frame-by-Frame Analysis")
+
+                for i, result in enumerate(frame_results):
+                    st.write(f"### Frame {i + 1}")
+                    display_frame_analysis(result)
+                    st.markdown("---")
+
+            with technical_tab:
+                st.subheader("Technical Details")
+
+                for i, result in enumerate(frame_results):
+                    display_technical_details(result, frame_number=i + 1)
 
         else:
             st.error("Could not extract frames from this video.")
@@ -663,11 +865,22 @@ if mode == "Analyze Single Still / Photo":
             result["tone"],
             palette_names,
             mood,
-            result["composition"]["composition_type"]
+            result["composition"]["composition_type"],
+            result["blocking"]["blocking_type"]
         )
 
-        st.subheader("Still / Photo Analysis")
-        display_frame_analysis(result)
+        analysis_tab, technical_tab = st.tabs([
+            "Cinematic Analysis",
+            "Technical Details"
+        ])
 
-        st.write("**Visual summary:**")
-        st.info(summary)
+        with analysis_tab:
+            st.subheader("Still / Photo Analysis")
+            display_frame_analysis(result)
+
+            st.write("**Visual summary:**")
+            st.info(summary)
+
+        with technical_tab:
+            st.subheader("Technical Details")
+            display_technical_details(result)
