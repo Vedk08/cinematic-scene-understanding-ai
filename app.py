@@ -12,7 +12,7 @@ from transformers import pipeline
 from ultralytics import YOLO
 
 
-st.title("🎬 Cinematic Scene Understanding AI - Phase 11")
+st.title("🎬 Cinematic Scene Understanding AI - Phase 12")
 st.write(
     "Analyze video clips or stills for shot type, lighting, color, aspect ratio, composition, blocking, mise-en-scène, visual interpretation, and lighting setup inference."
 )
@@ -54,8 +54,51 @@ def show_film_terms_glossary():
             """
         )
 
+def show_film_knowledge_panel():
+    with st.expander("Film Knowledge / Research Assistant"):
+        film_name = st.text_input("Enter a film name for research context")
+
+        if film_name:
+            st.markdown("### What to Research")
+
+            st.write("Use these search prompts to gather useful film-school context:")
+
+            st.code(f"{film_name} cinematography analysis")
+            st.code(f"{film_name} making of cinematography")
+            st.code(f"{film_name} director visual style")
+            st.code(f"{film_name} director of photography interview")
+            st.code(f"{film_name} lighting breakdown")
+            st.code(f"{film_name} color palette analysis")
+            st.code(f"{film_name} production design analysis")
+
+            st.markdown("### Notes to Collect")
+
+            st.write(
+                """
+                - Director and cinematographer  
+                - Camera / lens choices if available  
+                - Lighting approach  
+                - Color palette  
+                - Production design / mise-en-scène  
+                - Important visual motifs  
+                - Behind-the-scenes trivia  
+                - Any interviews from the director or DP  
+                """
+            )
+
+            st.markdown("### How to Connect It to This App")
+
+            st.info(
+                f"After analyzing a still or clip from {film_name}, compare the app's output "
+                "with real production context. For example, check whether the detected lighting, "
+                "color tone, blocking, aspect ratio, and mise-en-scène match known choices made "
+                "by the director or cinematographer."
+            )
+
 
 show_film_terms_glossary()
+show_film_knowledge_panel()
+
 
 
 @st.cache_resource
