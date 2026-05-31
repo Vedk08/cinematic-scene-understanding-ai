@@ -1,4 +1,5 @@
 import os
+import re
 import tempfile
 from collections import Counter
 from datetime import datetime
@@ -14,10 +15,27 @@ from transformers import pipeline
 from ultralytics import YOLO
 
 
-st.title("🎬 Cinematic Scene Understanding AI - Phase 14")
-st.write(
-    "A visual film analysis tool for understanding shot type, lighting, color, composition, blocking, mise-en-scène, and film knowledge."
+st.set_page_config(
+    page_title="Cinematic Scene Understanding AI",
+    page_icon="🎬",
+    layout="wide"
 )
+
+st.title("🎬 Cinematic Scene Understanding AI")
+st.write(
+    "Upload a video clip or still image and receive a film-school style visual analysis of shot type, "
+    "lighting, color, aspect ratio, composition, blocking, mise-en-scène, and cinematic mood."
+)
+
+st.info(
+    "This tool gives AI-assisted visual interpretations. Treat the output as a study aid, not an absolute production truth."
+)
+
+
+def safe_filename(text):
+    text = text.lower().strip()
+    text = re.sub(r"[^a-z0-9]+", "_", text)
+    return text.strip("_") or "cinematic_analysis"
 
 
 def show_film_terms_glossary():
@@ -63,15 +81,12 @@ def fetch_movie_metadata(title):
     if not api_key:
         return None, "OMDb API key not found. Add it to .streamlit/secrets.toml"
 
-    url = "https://www.omdbapi.com/"
-    params = {
-        "t": title,
-        "apikey": api_key,
-        "plot": "full"
-    }
-
     try:
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(
+            "https://www.omdbapi.com/",
+            params={"t": title, "apikey": api_key, "plot": "full"},
+            timeout=10
+        )
         data = response.json()
 
         if data.get("Response") == "False":
@@ -85,7 +100,7 @@ def fetch_movie_metadata(title):
 
 def show_film_knowledge_panel():
     with st.expander("Film Knowledge"):
-        film_name = st.text_input("Enter a film title")
+        film_name = st.text_input("Enter a film title for context")
 
         if film_name:
             movie_data, error = fetch_movie_metadata(film_name)
@@ -131,7 +146,10 @@ movie_data = show_film_knowledge_panel()
 
 @st.cache_resource
 def load_classifier():
-    return pipeline("zero-shot-image-classification", model="openai/clip-vit-base-patch32")
+    return pipeline(
+        "zero-shot-image-classification",
+        model="openai/clip-vit-base-patch32"
+    )
 
 
 @st.cache_resource
@@ -147,11 +165,15 @@ def extract_frames(video_path, num_frames=5):
         return frames
 
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
     if total_frames <= 0:
         cap.release()
         return frames
 
-    frame_indices = [int(i * (total_frames - 1) / (num_frames - 1)) for i in range(num_frames)]
+    frame_indices = [
+        int(i * (total_frames - 1) / (num_frames - 1))
+        for i in range(num_frames)
+    ]
 
     for idx in frame_indices:
         cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
@@ -166,7 +188,11 @@ def extract_frames(video_path, num_frames=5):
 
 def classify_shot(image, classifier):
     labels = ["close-up shot", "medium shot", "wide shot"]
-    return classifier(image, candidate_labels=labels, hypothesis_template="This image shows a {}")
+    return classifier(
+        image,
+        candidate_labels=labels,
+        hypothesis_template="This image shows a {}"
+    )
 
 
 def get_frame_quality(frame):
@@ -270,10 +296,6 @@ def infer_lighting_setup(frame, lighting_label, mean_brightness, contrast, dark_
         "vertical_light": vertical_light,
         "backlight_guess": backlight_guess,
         "practical_guess": practical_guess,
-        "left_brightness": left_mean,
-        "right_brightness": right_mean,
-        "top_brightness": top_mean,
-        "bottom_brightness": bottom_mean,
         "setup_summary": setup_summary
     }
 
@@ -292,7 +314,10 @@ def analyze_aspect_ratio(frame):
         "1:1 square format": 1.00,
     }
 
-    closest_label = min(common_ratios, key=lambda label: abs(common_ratios[label] - ratio))
+    closest_label = min(
+        common_ratios,
+        key=lambda label: abs(common_ratios[label] - ratio)
+    )
 
     if ratio > 2.1:
         format_type = "cinematic ultra-wide frame"
@@ -451,7 +476,10 @@ def get_primary_subject_box(person_detections):
     if not person_detections:
         return None
 
-    return max(person_detections, key=lambda detection: detection["box"][2] * detection["box"][3])
+    return max(
+        person_detections,
+        key=lambda detection: detection["box"][2] * detection["box"][3]
+    )
 
 
 def analyze_symmetry(frame, quality_status):
@@ -469,7 +497,9 @@ def analyze_symmetry(frame, quality_status):
     left = left[:, :min_width]
     right_flipped = right_flipped[:, :min_width]
 
-    difference = np.mean(np.abs(left.astype("float") - right_flipped.astype("float")))
+    difference = np.mean(
+        np.abs(left.astype("float") - right_flipped.astype("float"))
+    )
     symmetry_score = max(0, 100 - difference)
 
     if symmetry_score > 75:
@@ -528,7 +558,11 @@ def analyze_blocking(frame, detections, quality_status):
             "blocking_summary": f"The frame uses single-subject blocking with {dominance}, suggesting focus on an individual presence within the scene.",
         }
 
-    people_sorted = sorted(people, key=lambda d: d["box"][2] * d["box"][3], reverse=True)
+    people_sorted = sorted(
+        people,
+        key=lambda d: d["box"][2] * d["box"][3],
+        reverse=True
+    )
 
     p1 = people_sorted[0]
     p2 = people_sorted[1]
@@ -555,8 +589,17 @@ def analyze_blocking(frame, detections, quality_status):
         relationship = "strong physical separation"
         blocking_type = "separated / emotionally distant blocking"
 
-    dominance = "one subject visually dominates the frame" if area_ratio > 2.0 else "subjects have relatively balanced visual weight"
-    depth = "foreground-background separation" if area_ratio > 1.8 else "similar depth plane"
+    dominance = (
+        "one subject visually dominates the frame"
+        if area_ratio > 2.0
+        else "subjects have relatively balanced visual weight"
+    )
+
+    depth = (
+        "foreground-background separation"
+        if area_ratio > 1.8
+        else "similar depth plane"
+    )
 
     blocking_summary = (
         f"The frame contains {len(people)} detected people with {relationship}. "
@@ -968,11 +1011,11 @@ Generated: {now}
 
 TITLE
 {title}
-
 """
 
     if movie_data:
         report += f"""
+
 FILM KNOWLEDGE
 Film: {movie_data.get('Title', 'N/A')}
 Year: {movie_data.get('Year', 'N/A')}
@@ -983,10 +1026,10 @@ IMDb Rating: {movie_data.get('imdbRating', 'N/A')}
 
 Story Context:
 {movie_data.get('Plot', 'N/A')}
-
 """
 
     report += f"""
+
 SCENE SUMMARY
 {summary}
 
@@ -1035,6 +1078,7 @@ def display_frame_analysis(result):
         metric_card("Visual Density", mise["visual_density"])
 
     st.markdown("### Lighting Read")
+
     col3, col4 = st.columns(2)
 
     with col3:
@@ -1077,11 +1121,17 @@ def display_frame_analysis(result):
 classifier = load_classifier()
 yolo_model = load_yolo_model()
 
-mode = st.radio("Choose analysis mode:", ["Analyze Video Clip", "Analyze Single Still / Photo"])
-
+st.markdown("## Start Analysis")
+mode = st.radio(
+    "Choose what you want to analyze:",
+    ["Analyze Video Clip", "Analyze Single Still / Photo"]
+)
 
 if mode == "Analyze Video Clip":
-    uploaded_video = st.file_uploader("Upload video", type=["mp4", "mov", "avi", "mkv"])
+    uploaded_video = st.file_uploader(
+        "Upload a short video clip",
+        type=["mp4", "mov", "avi", "mkv"]
+    )
 
     if uploaded_video is not None:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
@@ -1089,13 +1139,20 @@ if mode == "Analyze Video Clip":
             path = tmp.name
 
         st.video(uploaded_video)
-        st.success("Video uploaded successfully!")
+        st.success("Video uploaded successfully. Analyzing representative frames...")
 
         frames = extract_frames(path, num_frames=5)
 
         if frames:
-            frame_results = [analyze_single_frame(frame, classifier, yolo_model) for frame in frames]
-            usable_results = [r for r in frame_results if r["quality_status"] == "usable"]
+            frame_results = [
+                analyze_single_frame(frame, classifier, yolo_model)
+                for frame in frames
+            ]
+
+            usable_results = [
+                result for result in frame_results
+                if result["quality_status"] == "usable"
+            ]
 
             st.subheader("Clip-Level Summary")
 
@@ -1112,6 +1169,7 @@ if mode == "Analyze Video Clip":
 
             clip_colors, clip_proportions = aggregate_clip_palette(frame_results)
             palette_names = simplify_hex_names(clip_colors)
+
             mood = infer_mood(dominant_shot, dominant_lighting, dominant_tone)
             clip_interpretation = interpret_clip_visual_language(frame_results)
 
@@ -1131,28 +1189,25 @@ if mode == "Analyze Video Clip":
             col1, col2 = st.columns([1.2, 1])
 
             with col1:
-                st.write(f"**Dominant shot type:** {dominant_shot}")
-                st.write(f"**Dominant lighting:** {dominant_lighting}")
-                st.write(f"**Dominant key direction:** {dominant_key_light}")
-                st.write(f"**Dominant color tone:** {dominant_tone}")
-                st.write(f"**Dominant frame format:** {dominant_format}")
-                st.write(f"**Dominant composition:** {dominant_composition}")
-                st.write(f"**Dominant blocking:** {dominant_blocking}")
-                st.write(f"**Dominant mise-en-scène:** {dominant_mise}")
-                st.write(f"**Overall mood:** {mood}")
+                metric_card("Dominant Shot", dominant_shot)
+                metric_card("Dominant Lighting", dominant_lighting)
+                metric_card("Dominant Color Tone", dominant_tone)
+                metric_card("Frame Format", dominant_format)
+                metric_card("Overall Mood", mood)
 
             with col2:
-                st.write("**Clip Palette:**")
+                st.write("**Clip Palette**")
                 show_palette(clip_colors, clip_proportions, height=55)
 
-            st.write("**Scene Summary:**")
+            st.markdown("### Scene Summary")
             st.info(summary)
 
-            st.write("**Visual Interpretation:**")
+            st.markdown("### Visual Interpretation")
             st.info(clip_interpretation)
 
+            report_title = movie_data.get("Title", "Video Clip Analysis") if movie_data else "Video Clip Analysis"
             report_text = create_report_text(
-                "Video Clip Analysis",
+                report_title,
                 summary,
                 clip_interpretation,
                 movie_data
@@ -1161,7 +1216,7 @@ if mode == "Analyze Video Clip":
             st.download_button(
                 label="Download Cinematic Report",
                 data=report_text,
-                file_name="cinematic_analysis_report.txt",
+                file_name=f"{safe_filename(report_title)}_cinematic_report.txt",
                 mime="text/plain"
             )
 
@@ -1180,7 +1235,10 @@ if mode == "Analyze Video Clip":
 
 
 if mode == "Analyze Single Still / Photo":
-    uploaded_image = st.file_uploader("Upload still / photo", type=["jpg", "jpeg", "png", "webp"])
+    uploaded_image = st.file_uploader(
+        "Upload a still image, screenshot, or photo",
+        type=["jpg", "jpeg", "png", "webp"]
+    )
 
     if uploaded_image is not None:
         image = Image.open(uploaded_image).convert("RGB")
@@ -1207,11 +1265,12 @@ if mode == "Analyze Single Still / Photo":
         st.subheader("Still / Photo Analysis")
         display_frame_analysis(result)
 
-        st.write("**Visual Summary:**")
+        st.markdown("### Visual Summary")
         st.info(summary)
 
+        report_title = movie_data.get("Title", "Still Image Analysis") if movie_data else "Still Image Analysis"
         report_text = create_report_text(
-            "Still / Photo Analysis",
+            report_title,
             summary,
             result["visual_interpretation"],
             movie_data
@@ -1220,6 +1279,6 @@ if mode == "Analyze Single Still / Photo":
         st.download_button(
             label="Download Cinematic Report",
             data=report_text,
-            file_name="cinematic_analysis_report.txt",
+            file_name=f"{safe_filename(report_title)}_cinematic_report.txt",
             mime="text/plain"
         )
