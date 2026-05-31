@@ -1,351 +1,165 @@
 # 🎬 Cinematic Scene Understanding AI
 
-A computer vision and AI-powered film analysis tool that helps filmmakers, cinematography enthusiasts, and film students analyze the visual language of movies.
+An AI-powered film analysis tool that helps users understand the visual language of cinema.
 
-The system extracts frames from videos or analyzes individual stills and automatically identifies cinematic characteristics such as framing, lighting, composition, blocking, color palette, aspect ratio, mise-en-scène, and visual storytelling techniques.
-
----
-
-## Project Goal
-
-Traditional AI tools can describe an image.
-
-This project attempts to analyze a frame the way a cinematographer, director, or film student would.
-
-The long-term goal is to build an AI-powered cinema school capable of understanding:
-
-* Shot composition
-* Lighting
-* Blocking
-* Mise-en-scène
-* Color design
-* Aspect ratios
-* Visual storytelling
-* Cinematography techniques
-* Film metadata and production context
+The app analyzes video clips and still images through a film-school lens, identifying shot type, lighting, color palette, aspect ratio, composition, blocking, mise-en-scène, visual mood, and film context.
 
 ---
 
-# Current Features
+## What It Does
 
-## Video Analysis
+Users can:
 
-Upload a video and automatically:
-
-* Extract representative frames
-* Analyze each frame individually
-* Generate a clip-level visual summary
-
----
-
-## Still Image Analysis
-
-Upload a single frame, screenshot, photograph, or movie still and receive a detailed cinematic breakdown.
+- Upload a video clip
+- Extract representative frames
+- Upload a still image or movie frame
+- Search film knowledge using OMDb
+- Analyze visual language
+- Download a cinematic report
 
 ---
 
-## Shot Type Classification
+## Core Features
 
-Uses CLIP Zero-Shot Classification to identify:
+### Video Clip Analysis
+- Extracts representative frames from uploaded videos using OpenCV
+- Analyzes each frame individually
+- Produces a clip-level cinematic summary
 
-* Close-Up Shot
-* Medium Shot
-* Wide Shot
+### Still Image Analysis
+- Supports movie stills, screenshots, and photographs
+- Runs the same visual analysis pipeline on a single image
 
----
+### Shot Type Classification
+Uses CLIP zero-shot image classification to identify:
 
-## Lighting Analysis
+- Close-up shot
+- Medium shot
+- Wide shot
 
-Detects:
+### Lighting Analysis
+Uses image statistics to classify:
 
-* Low-Key Dramatic Lighting
-* High-Key Lighting
-* Soft Lighting
-* Neutral Lighting
+- Low-key dramatic lighting
+- High-key lighting
+- Soft lighting
+- Neutral lighting
 
-Also calculates:
+### Lighting Setup Inference
+Infers possible lighting qualities such as:
 
-* Brightness
-* Contrast
-* Dark Pixel Ratio
+- Key light direction
+- Fill strength
+- Shadow style
+- Practical light source possibility
 
----
+### Color Palette Analysis
+Uses KMeans clustering to extract:
 
-## Lighting Setup Inference (Phase 11)
+- Dominant color palette
+- Warm / cool / neutral tone
+- Palette visualization
 
-Attempts to infer:
+### Aspect Ratio Analysis
+Detects frame geometry and common formats:
 
-* Key Light Direction
-* Fill Strength
-* Shadow Style
-* Vertical Light Distribution
-* Backlight / Rim Light Possibilities
-* Practical Light Source Guesses
+- 4:3
+- 16:9
+- 1.85:1
+- 2.39:1
+- Square
+- Vertical/social format
 
-Generates a lighting interpretation based on image brightness distribution.
-
----
-
-## Color Analysis
-
-Extracts dominant colors using K-Means clustering.
-
-Provides:
-
-* Dominant Color Palette
-* Color Tone Classification
-
-  * Warm
-  * Cool
-  * Neutral
-* Palette HEX Values
-
----
-
-## Aspect Ratio Analysis
-
-Identifies likely frame format:
-
-* 4:3
-* 16:9
-* 1.85:1
-* 2.39:1
-* Vertical Formats
-* Square Formats
-
-Provides visual interpretation of how frame geometry affects storytelling.
-
----
-
-## Composition Analysis
-
+### Composition Analysis
 Analyzes:
 
-* Rule of Thirds
-* Subject Placement
-* Negative Space
-* Framing Tightness
+- Rule of thirds
+- Centered composition
+- Subject placement
+- Framing
+- Negative space
 
-Can display:
+### Object and Subject Detection
+Uses YOLOv8 to detect people and objects, supporting:
 
-* Rule-of-Thirds Overlay
+- Subject placement
+- Blocking analysis
+- Mise-en-scène analysis
 
----
+### Blocking Analysis
+Interprets how subjects are staged:
 
-## Object Detection (YOLOv8)
+- Single-subject blocking
+- Two-person staging
+- Character spacing
+- Visual dominance
+- Foreground/background relationship
 
-Detects:
+### Mise-en-scène Analysis
+Analyzes:
 
-* People
-* Props
-* Objects
+- Setting type
+- Visual density
+- Props / visible objects
+- Subject-environment relationship
 
-Used to improve:
+### Film Knowledge
+Uses OMDb API to retrieve:
 
-* Composition Analysis
-* Blocking Analysis
-* Mise-en-scène Analysis
+- Poster
+- Year
+- Director
+- Genre
+- Runtime
+- IMDb rating
+- Cast
+- Plot context
 
----
+### Downloadable Report
+Generates a clean text report containing:
 
-## Blocking Analysis
-
-Identifies:
-
-* Single Subject Blocking
-* Two-Person Staging
-* Character Separation
-* Visual Dominance
-* Spatial Relationships
-
-Provides natural language interpretation of character arrangement.
-
----
-
-## Symmetry Analysis
-
-Evaluates:
-
-* Balanced Composition
-* Moderate Symmetry
-* Asymmetrical Frames
-
----
-
-## Mise-en-scène Analysis
-
-Attempts to understand:
-
-* Visual Density
-* Environment Type
-* Props
-* Subject-Environment Relationship
-
-Provides cinematic interpretation rather than simple object detection.
+- Film context
+- Scene summary
+- Visual interpretation
+- AI-assisted analysis note
 
 ---
 
-## Visual Language Interpretation
+## Tech Stack
 
-Combines:
-
-* Shot Type
-* Lighting
-* Color
-* Composition
-* Blocking
-* Mise-en-scène
-
-Into a film-school style explanation of how the image communicates meaning.
-
----
-
-## Film Knowledge Search (Phase 13)
-
-Integrated OMDb API support.
-
-Search any film and retrieve:
-
-* Poster
-* Director
-* Cast
-* Genre
-* Runtime
-* IMDb Rating
-* Plot Summary
-
-Includes research prompts for deeper cinematography analysis.
+- Python
+- Streamlit
+- OpenCV
+- NumPy
+- Pillow
+- Scikit-learn
+- Hugging Face Transformers
+- CLIP
+- YOLOv8
+- OMDb API
+- Requests
 
 ---
 
-# Technical Stack
+## Architecture
 
-### Frontend
-
-* Streamlit
-
-### Computer Vision
-
-* OpenCV
-
-### Object Detection
-
-* YOLOv8
-
-### Machine Learning
-
-* CLIP
-* Hugging Face Transformers
-
-### Data Processing
-
-* NumPy
-* Scikit-Learn
-
-### Film Metadata
-
-* OMDb API
-
----
-
-# Project Roadmap
-
-## Completed
-
-### Phase 1
-
-Video Upload & Frame Extraction
-
-### Phase 2
-
-Shot Classification using CLIP
-
-### Phase 3
-
-Lighting & Color Analysis
-
-### Phase 4
-
-Clip-Level Summaries
-
-### Phase 5
-
-Still Image Analysis
-
-### Phase 6
-
-Object Detection & Composition Analysis
-
-### Phase 7
-
-Blocking & Mise-en-scène Analysis
-
-### Phase 8
-
+```text
+Video / Image Input
+        ↓
+Frame Extraction or Image Loading
+        ↓
+CLIP Shot Classification
+        ↓
+OpenCV Lighting + Frame Geometry Analysis
+        ↓
+KMeans Color Palette Extraction
+        ↓
+YOLO Subject / Object Detection
+        ↓
+Composition + Blocking + Mise-en-scène Logic
+        ↓
 Visual Interpretation Layer
-
-### Phase 9
-
-Technical Details Separation
-
-### Phase 10
-
-Advanced Cinematic UI & Analysis Cards
-
-### Phase 11
-
-Lighting Setup Inference
-
-### Phase 12
-
-Film Research Assistant
-
-### Phase 13
-
-OMDb Film Metadata Integration
-
----
-
-## Upcoming
-
-### Phase 14
-
-Exportable Cinematic Reports (PDF)
-
-### Phase 15
-
-Movie Knowledge Database
-
-### Phase 16
-
-Advanced Cinematography Style Detection
-
-### Phase 17
-
-Director / Cinematographer Signature Analysis
-
-### Phase 18
-
-AI-Powered Film School Assistant
-
----
-
-# Future Vision
-
-Eventually the system should be capable of:
-
-* Understanding cinematography at a film-school level
-* Inferring lighting setups
-* Identifying visual motifs
-* Comparing directors' visual styles
-* Explaining scenes visually
-* Teaching filmmaking concepts interactively
-
-The goal is not simply image recognition.
-
-The goal is cinematic understanding.
-
----
-
-Created by Vedansh Kumar
-MSc Computer Science — TU Dresden
+        ↓
+Film Knowledge Context
+        ↓
+Downloadable Cinematic Report
