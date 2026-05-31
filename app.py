@@ -12,18 +12,15 @@ from transformers import pipeline
 from ultralytics import YOLO
 
 
-st.title("🎬 Cinematic Scene Understanding AI - Phase 8")
+st.title("🎬 Cinematic Scene Understanding AI - Phase 9")
 st.write(
-    "Analyze video clips or stills for shot type, lighting, color, composition, blocking, objects, and mise-en-scène."
+    "Analyze video clips or stills for shot type, lighting, color, aspect ratio, composition, blocking, objects, and mise-en-scène."
 )
 
 
 @st.cache_resource
 def load_classifier():
-    return pipeline(
-        "zero-shot-image-classification",
-        model="openai/clip-vit-base-patch32"
-    )
+    return pipeline("zero-shot-image-classification", model="openai/clip-vit-base-patch32")
 
 
 @st.cache_resource
@@ -43,15 +40,11 @@ def extract_frames(video_path, num_frames=5):
         cap.release()
         return frames
 
-    frame_indices = [
-        int(i * (total_frames - 1) / (num_frames - 1))
-        for i in range(num_frames)
-    ]
+    frame_indices = [int(i * (total_frames - 1) / (num_frames - 1)) for i in range(num_frames)]
 
     for idx in frame_indices:
         cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
         success, frame = cap.read()
-
         if success:
             frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
@@ -61,23 +54,16 @@ def extract_frames(video_path, num_frames=5):
 
 def classify_shot(image, classifier):
     labels = ["close-up shot", "medium shot", "wide shot"]
-
-    return classifier(
-        image,
-        candidate_labels=labels,
-        hypothesis_template="This image shows a {}"
-    )
+    return classifier(image, candidate_labels=labels, hypothesis_template="This image shows a {}")
 
 
 def get_frame_quality(frame):
     gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-
     mean = float(np.mean(gray))
     contrast = float(np.std(gray))
 
     if mean < 10 and contrast < 5:
         return "unusable_black_frame", mean, contrast
-
     if mean < 25 and contrast < 10:
         return "too_dark_to_analyze_reliably", mean, contrast
 
@@ -105,6 +91,51 @@ def analyze_lighting(frame):
     return label, mean, contrast, dark_ratio
 
 
+def analyze_aspect_ratio(frame):
+    h, w, _ = frame.shape
+    ratio = w / h
+
+    common_ratios = {
+        "1.33:1 / 4:3 classic academy ratio": 1.33,
+        "1.66:1 European widescreen": 1.66,
+        "1.78:1 / 16:9 standard widescreen": 1.78,
+        "1.85:1 theatrical widescreen": 1.85,
+        "2.35:1 / 2.39:1 cinematic anamorphic widescreen": 2.39,
+        "9:16 vertical / social media format": 0.56,
+        "1:1 square format": 1.00,
+    }
+
+    closest_label = min(common_ratios, key=lambda label: abs(common_ratios[label] - ratio))
+
+    if ratio > 2.1:
+        format_type = "cinematic ultra-wide frame"
+        interpretation = "The wide frame emphasizes horizontal space, environment, and spatial relationships."
+    elif ratio > 1.7:
+        format_type = "standard widescreen frame"
+        interpretation = "The frame balances subject presence with the surrounding environment."
+    elif 1.2 <= ratio <= 1.5:
+        format_type = "classic / boxier frame"
+        interpretation = "The boxier frame can feel intimate, formal, or character-focused."
+    elif 0.8 <= ratio <= 1.1:
+        format_type = "square-like frame"
+        interpretation = "The square frame creates a balanced, contained visual field."
+    elif ratio < 0.8:
+        format_type = "vertical frame"
+        interpretation = "The vertical frame emphasizes height, bodies, and portrait-style composition."
+    else:
+        format_type = "unusual frame shape"
+        interpretation = "The frame shape is less conventional and may create a distinct visual rhythm."
+
+    return {
+        "width": w,
+        "height": h,
+        "aspect_ratio": ratio,
+        "closest_format": closest_label,
+        "format_type": format_type,
+        "interpretation": interpretation,
+    }
+
+
 def extract_colors(frame, k=6):
     small = cv2.resize(frame, (100, 100), interpolation=cv2.INTER_AREA)
     pixels = small.reshape((-1, 3))
@@ -119,7 +150,6 @@ def extract_colors(frame, k=6):
     percentages = counts / counts.sum()
 
     idx = np.argsort(percentages)[::-1]
-
     return colors[idx], percentages[idx]
 
 
@@ -139,8 +169,7 @@ def analyze_color_tone(colors, percentages):
         return "warm"
     elif b > r + 20:
         return "cool"
-    else:
-        return "neutral"
+    return "neutral"
 
 
 def show_palette(colors, percentages, height=65):
@@ -215,12 +244,7 @@ def detect_objects_yolo(frame, yolo_model, confidence_threshold=0.25):
         detections.append({
             "label": names[class_id],
             "confidence": confidence,
-            "box": (
-                int(x1),
-                int(y1),
-                int(x2 - x1),
-                int(y2 - y1)
-            )
+            "box": (int(x1), int(y1), int(x2 - x1), int(y2 - y1)),
         })
 
     return detections
@@ -234,10 +258,7 @@ def get_primary_subject_box(person_detections):
     if not person_detections:
         return None
 
-    return max(
-        person_detections,
-        key=lambda detection: detection["box"][2] * detection["box"][3]
-    )
+    return max(person_detections, key=lambda detection: detection["box"][2] * detection["box"][3])
 
 
 def analyze_symmetry(frame, quality_status):
@@ -293,8 +314,7 @@ def analyze_blocking(frame, detections, quality_status):
         }
 
     if len(people) == 1:
-        box = people[0]["box"]
-        x, y, bw, bh = box
+        x, y, bw, bh = people[0]["box"]
         area_ratio = (bw * bh) / (w * h)
 
         if area_ratio > 0.30:
@@ -315,11 +335,7 @@ def analyze_blocking(frame, detections, quality_status):
             "blocking_summary": f"The frame uses single-subject blocking with {dominance}, suggesting focus on an individual presence within the scene.",
         }
 
-    people_sorted = sorted(
-        people,
-        key=lambda d: d["box"][2] * d["box"][3],
-        reverse=True
-    )
+    people_sorted = sorted(people, key=lambda d: d["box"][2] * d["box"][3], reverse=True)
 
     p1 = people_sorted[0]
     p2 = people_sorted[1]
@@ -346,15 +362,8 @@ def analyze_blocking(frame, detections, quality_status):
         relationship = "strong physical separation"
         blocking_type = "separated / emotionally distant blocking"
 
-    if area_ratio > 2.0:
-        dominance = "one subject visually dominates the frame"
-    else:
-        dominance = "subjects have relatively balanced visual weight"
-
-    if area_ratio > 1.8:
-        depth = "foreground-background separation"
-    else:
-        depth = "similar depth plane"
+    dominance = "one subject visually dominates the frame" if area_ratio > 2.0 else "subjects have relatively balanced visual weight"
+    depth = "foreground-background separation" if area_ratio > 1.8 else "similar depth plane"
 
     blocking_summary = (
         f"The frame contains {len(people)} detected people with {relationship}. "
@@ -388,7 +397,6 @@ def analyze_composition(frame, detections, quality_status):
 
     person_detections = get_person_detections(detections)
     primary_subject = get_primary_subject_box(person_detections)
-
     object_labels = [d["label"] for d in detections if d["label"] != "person"]
 
     if primary_subject is None:
@@ -456,15 +464,8 @@ def analyze_mise_en_scene(frame, detections, composition, lighting, tone, qualit
     object_area = sum(d["box"][2] * d["box"][3] for d in object_detections)
     object_area_ratio = object_area / frame_area if frame_area > 0 else 0
 
-    indoor_objects = {
-        "chair", "couch", "bed", "dining table", "tv", "laptop",
-        "book", "clock", "vase", "refrigerator", "microwave", "oven"
-    }
-
-    outdoor_objects = {
-        "car", "truck", "bus", "traffic light", "stop sign",
-        "bicycle", "motorcycle", "bench", "boat"
-    }
+    indoor_objects = {"chair", "couch", "bed", "dining table", "tv", "laptop", "book", "clock", "vase", "refrigerator", "microwave", "oven"}
+    outdoor_objects = {"car", "truck", "bus", "traffic light", "stop sign", "bicycle", "motorcycle", "bench", "boat"}
 
     if any(obj in indoor_objects for obj in object_labels):
         setting_type = "interior / domestic or controlled space"
@@ -555,7 +556,6 @@ def draw_rule_of_thirds_grid(frame):
 
 def analyze_single_frame(frame, classifier, yolo_model):
     quality_status, _, _ = get_frame_quality(frame)
-
     image = Image.fromarray(frame)
 
     if quality_status == "unusable_black_frame":
@@ -568,6 +568,7 @@ def analyze_single_frame(frame, classifier, yolo_model):
         shot_score = shot_results[0]["score"]
 
     lighting, mean, contrast, dark = analyze_lighting(frame)
+    aspect_ratio = analyze_aspect_ratio(frame)
     colors, percentages = extract_colors(frame, k=6)
     tone = analyze_color_tone(colors, percentages)
 
@@ -575,9 +576,7 @@ def analyze_single_frame(frame, classifier, yolo_model):
 
     composition = analyze_composition(frame, detections, quality_status)
     blocking = analyze_blocking(frame, detections, quality_status)
-    mise_en_scene = analyze_mise_en_scene(
-        frame, detections, composition, lighting, tone, quality_status
-    )
+    mise_en_scene = analyze_mise_en_scene(frame, detections, composition, lighting, tone, quality_status)
     symmetry_label, symmetry_score = analyze_symmetry(frame, quality_status)
 
     return {
@@ -590,6 +589,7 @@ def analyze_single_frame(frame, classifier, yolo_model):
         "mean_brightness": mean,
         "contrast": contrast,
         "dark_ratio": dark,
+        "aspect_ratio": aspect_ratio,
         "colors": [tuple(map(int, c)) for c in colors],
         "proportions": [float(p) for p in percentages],
         "tone": tone,
@@ -643,26 +643,18 @@ def infer_mood(dominant_shot, dominant_lighting, dominant_tone):
     return "cinematic and visually controlled"
 
 
-def generate_summary(
-    dominant_shot,
-    dominant_lighting,
-    dominant_tone,
-    palette_names,
-    mood,
-    dominant_composition=None,
-    dominant_blocking=None,
-    dominant_mise_en_scene=None
-):
+def generate_summary(dominant_shot, dominant_lighting, dominant_tone, palette_names, mood, dominant_composition=None, dominant_blocking=None, dominant_mise_en_scene=None, dominant_format=None):
     palette_text = ", ".join(palette_names[:4])
 
     composition_text = f" The framing often uses {dominant_composition}." if dominant_composition else ""
     blocking_text = f" The blocking suggests {dominant_blocking}." if dominant_blocking else ""
     mise_text = f" The mise-en-scène appears {dominant_mise_en_scene}." if dominant_mise_en_scene else ""
+    format_text = f" The frame geometry reads as {dominant_format}." if dominant_format else ""
 
     return (
         f"This visual predominantly uses {dominant_shot}, {dominant_lighting}, "
         f"and a {dominant_tone}-toned palette built around {palette_text}. "
-        f"Overall, it feels {mood}.{composition_text}{blocking_text}{mise_text}"
+        f"Overall, it feels {mood}.{format_text}{composition_text}{blocking_text}{mise_text}"
     )
 
 
@@ -699,6 +691,7 @@ def display_frame_analysis(result):
     composition = result["composition"]
     blocking = result["blocking"]
     mise = result["mise_en_scene"]
+    aspect = result["aspect_ratio"]
 
     st.markdown("### Cinematic Breakdown")
 
@@ -708,6 +701,8 @@ def display_frame_analysis(result):
         metric_card("Shot", result["shot"])
         metric_card("Lighting", result["lighting"])
         metric_card("Color Tone", result["tone"])
+        metric_card("Aspect Ratio", f"{aspect['aspect_ratio']:.2f}:1")
+        metric_card("Frame Format", aspect["format_type"])
         metric_card("Composition", composition["composition_type"])
         metric_card("Subject Placement", composition["subject_position"])
 
@@ -717,6 +712,9 @@ def display_frame_analysis(result):
         metric_card("Blocking", blocking["blocking_type"])
         metric_card("Balance", result["symmetry_label"])
         metric_card("Visual Density", mise["visual_density"])
+
+    st.markdown("### Frame Geometry")
+    st.info(aspect["interpretation"])
 
     st.markdown("### Blocking Read")
     st.info(blocking["blocking_summary"])
@@ -745,11 +743,7 @@ def display_frame_analysis(result):
     if composition["detections"]:
         with st.expander("Show YOLO detections"):
             annotated = draw_yolo_boxes(result["frame"], composition["detections"])
-            st.image(
-                annotated,
-                caption="YOLO detections: green = person, blue = objects",
-                use_container_width=True
-            )
+            st.image(annotated, caption="YOLO detections: green = person, blue = objects", use_container_width=True)
 
 
 def display_technical_details(result, frame_number=None):
@@ -759,8 +753,13 @@ def display_technical_details(result, frame_number=None):
     composition = result["composition"]
     blocking = result["blocking"]
     mise = result["mise_en_scene"]
+    aspect = result["aspect_ratio"]
 
     st.write(f"**Frame quality:** {result['quality_status']}")
+    st.write(f"**Frame size:** {aspect['width']} x {aspect['height']}")
+    st.write(f"**Aspect ratio:** {aspect['aspect_ratio']:.3f}")
+    st.write(f"**Closest format:** {aspect['closest_format']}")
+    st.write(f"**Format type:** {aspect['format_type']}")
     st.write(f"**Shot confidence:** {result['shot_score']:.2f}")
     st.write(f"**Mean brightness:** {result['mean_brightness']:.1f}")
     st.write(f"**Contrast:** {result['contrast']:.1f}")
@@ -787,17 +786,11 @@ def display_technical_details(result, frame_number=None):
 classifier = load_classifier()
 yolo_model = load_yolo_model()
 
-mode = st.radio(
-    "Choose analysis mode:",
-    ["Analyze Video Clip", "Analyze Single Still / Photo"]
-)
+mode = st.radio("Choose analysis mode:", ["Analyze Video Clip", "Analyze Single Still / Photo"])
 
 
 if mode == "Analyze Video Clip":
-    uploaded_video = st.file_uploader(
-        "Upload video",
-        type=["mp4", "mov", "avi", "mkv"]
-    )
+    uploaded_video = st.file_uploader("Upload video", type=["mp4", "mov", "avi", "mkv"])
 
     if uploaded_video is not None:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
@@ -810,11 +803,7 @@ if mode == "Analyze Video Clip":
         frames = extract_frames(path, num_frames=5)
 
         if frames:
-            frame_results = [
-                analyze_single_frame(frame, classifier, yolo_model)
-                for frame in frames
-            ]
-
+            frame_results = [analyze_single_frame(frame, classifier, yolo_model) for frame in frames]
             usable_results = [r for r in frame_results if r["quality_status"] == "usable"]
 
             st.subheader("Clip-Level Summary")
@@ -827,6 +816,7 @@ if mode == "Analyze Video Clip":
             dominant_composition = Counter([r["composition"]["composition_type"] for r in summary_source]).most_common(1)[0][0]
             dominant_blocking = Counter([r["blocking"]["blocking_type"] for r in summary_source]).most_common(1)[0][0]
             dominant_mise = Counter([r["mise_en_scene"]["visual_density"] for r in summary_source]).most_common(1)[0][0]
+            dominant_format = Counter([r["aspect_ratio"]["format_type"] for r in summary_source]).most_common(1)[0][0]
 
             clip_colors, clip_proportions = aggregate_clip_palette(frame_results)
             palette_names = simplify_hex_names(clip_colors)
@@ -840,7 +830,8 @@ if mode == "Analyze Video Clip":
                 mood,
                 dominant_composition,
                 dominant_blocking,
-                dominant_mise
+                dominant_mise,
+                dominant_format
             )
 
             col1, col2 = st.columns([1.2, 1])
@@ -849,6 +840,7 @@ if mode == "Analyze Video Clip":
                 st.write(f"**Dominant shot type:** {dominant_shot}")
                 st.write(f"**Dominant lighting:** {dominant_lighting}")
                 st.write(f"**Dominant color tone:** {dominant_tone}")
+                st.write(f"**Dominant frame format:** {dominant_format}")
                 st.write(f"**Dominant composition:** {dominant_composition}")
                 st.write(f"**Dominant blocking:** {dominant_blocking}")
                 st.write(f"**Dominant mise-en-scène:** {dominant_mise}")
@@ -863,14 +855,10 @@ if mode == "Analyze Video Clip":
 
             st.markdown("---")
 
-            analysis_tab, technical_tab = st.tabs([
-                "Cinematic Analysis",
-                "Technical Details"
-            ])
+            analysis_tab, technical_tab = st.tabs(["Cinematic Analysis", "Technical Details"])
 
             with analysis_tab:
                 st.subheader("Frame-by-Frame Analysis")
-
                 for i, result in enumerate(frame_results):
                     st.write(f"### Frame {i + 1}")
                     display_frame_analysis(result)
@@ -878,7 +866,6 @@ if mode == "Analyze Video Clip":
 
             with technical_tab:
                 st.subheader("Technical Details")
-
                 for i, result in enumerate(frame_results):
                     display_technical_details(result, frame_number=i + 1)
 
@@ -889,10 +876,7 @@ if mode == "Analyze Video Clip":
 
 
 if mode == "Analyze Single Still / Photo":
-    uploaded_image = st.file_uploader(
-        "Upload still / photo",
-        type=["jpg", "jpeg", "png", "webp"]
-    )
+    uploaded_image = st.file_uploader("Upload still / photo", type=["jpg", "jpeg", "png", "webp"])
 
     if uploaded_image is not None:
         image = Image.open(uploaded_image).convert("RGB")
@@ -911,13 +895,11 @@ if mode == "Analyze Single Still / Photo":
             mood,
             result["composition"]["composition_type"],
             result["blocking"]["blocking_type"],
-            result["mise_en_scene"]["visual_density"]
+            result["mise_en_scene"]["visual_density"],
+            result["aspect_ratio"]["format_type"]
         )
 
-        analysis_tab, technical_tab = st.tabs([
-            "Cinematic Analysis",
-            "Technical Details"
-        ])
+        analysis_tab, technical_tab = st.tabs(["Cinematic Analysis", "Technical Details"])
 
         with analysis_tab:
             st.subheader("Still / Photo Analysis")
