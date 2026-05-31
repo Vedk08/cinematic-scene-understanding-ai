@@ -12,9 +12,9 @@ from transformers import pipeline
 from ultralytics import YOLO
 
 
-st.title("🎬 Cinematic Scene Understanding AI - Phase 7.1")
+st.title("🎬 Cinematic Scene Understanding AI - Phase 8")
 st.write(
-    "Analyze video clips or stills for shot type, lighting, color, composition, objects, and blocking dynamics."
+    "Analyze video clips or stills for shot type, lighting, color, composition, blocking, objects, and mise-en-scène."
 )
 
 
@@ -227,10 +227,7 @@ def detect_objects_yolo(frame, yolo_model, confidence_threshold=0.25):
 
 
 def get_person_detections(detections):
-    return [
-        detection for detection in detections
-        if detection["label"] == "person"
-    ]
+    return [detection for detection in detections if detection["label"] == "person"]
 
 
 def get_primary_subject_box(person_detections):
@@ -392,10 +389,7 @@ def analyze_composition(frame, detections, quality_status):
     person_detections = get_person_detections(detections)
     primary_subject = get_primary_subject_box(person_detections)
 
-    object_labels = [
-        detection["label"] for detection in detections
-        if detection["label"] != "person"
-    ]
+    object_labels = [d["label"] for d in detections if d["label"] != "person"]
 
     if primary_subject is None:
         return {
@@ -442,6 +436,79 @@ def analyze_composition(frame, detections, quality_status):
     }
 
 
+def analyze_mise_en_scene(frame, detections, composition, lighting, tone, quality_status):
+    if quality_status != "usable":
+        return {
+            "setting_type": "unavailable",
+            "visual_density": "unavailable",
+            "props_detected": [],
+            "subject_environment_relationship": "unavailable",
+            "mise_en_scene_summary": "Mise-en-scène analysis is unavailable because the frame quality is too poor."
+        }
+
+    h, w, _ = frame.shape
+    frame_area = w * h
+
+    object_detections = [d for d in detections if d["label"] != "person"]
+    object_labels = [d["label"] for d in object_detections]
+    unique_objects = sorted(set(object_labels))
+
+    object_area = sum(d["box"][2] * d["box"][3] for d in object_detections)
+    object_area_ratio = object_area / frame_area if frame_area > 0 else 0
+
+    indoor_objects = {
+        "chair", "couch", "bed", "dining table", "tv", "laptop",
+        "book", "clock", "vase", "refrigerator", "microwave", "oven"
+    }
+
+    outdoor_objects = {
+        "car", "truck", "bus", "traffic light", "stop sign",
+        "bicycle", "motorcycle", "bench", "boat"
+    }
+
+    if any(obj in indoor_objects for obj in object_labels):
+        setting_type = "interior / domestic or controlled space"
+    elif any(obj in outdoor_objects for obj in object_labels):
+        setting_type = "exterior / public or street-like space"
+    elif composition["person_count"] > 0 and len(object_labels) == 0:
+        setting_type = "minimal character-focused space"
+    else:
+        setting_type = "ambiguous or abstract environment"
+
+    if len(object_labels) <= 1 and object_area_ratio < 0.08:
+        visual_density = "minimal mise-en-scène"
+    elif len(object_labels) <= 4 and object_area_ratio < 0.22:
+        visual_density = "moderately detailed mise-en-scène"
+    else:
+        visual_density = "dense / cluttered mise-en-scène"
+
+    if composition["person_count"] == 0:
+        relationship = "environment carries the visual emphasis"
+    elif composition["framing_note"] == "tight subject framing":
+        relationship = "subject dominates over the environment"
+    elif composition["framing_note"] in ["heavy negative space", "moderate negative space"]:
+        relationship = "environment strongly shapes the subject's presence"
+    else:
+        relationship = "subject and environment feel visually balanced"
+
+    props_text = ", ".join(unique_objects[:5]) if unique_objects else "few or no clear props"
+
+    summary = (
+        f"The frame suggests a {setting_type} with {visual_density}. "
+        f"Detected props or objects include {props_text}. "
+        f"The {lighting} and {tone} color tone support the visual atmosphere. "
+        f"The subject-environment relationship suggests that {relationship}."
+    )
+
+    return {
+        "setting_type": setting_type,
+        "visual_density": visual_density,
+        "props_detected": unique_objects,
+        "subject_environment_relationship": relationship,
+        "mise_en_scene_summary": summary
+    }
+
+
 def draw_yolo_boxes(frame, detections):
     annotated = frame.copy()
 
@@ -452,14 +519,7 @@ def draw_yolo_boxes(frame, detections):
 
         color = (0, 255, 0) if label == "person" else (255, 0, 0)
 
-        cv2.rectangle(
-            annotated,
-            (x, y),
-            (x + w, y + h),
-            color,
-            3
-        )
-
+        cv2.rectangle(annotated, (x, y), (x + w, y + h), color, 3)
         cv2.putText(
             annotated,
             f"{label} {confidence:.2f}",
@@ -511,13 +571,13 @@ def analyze_single_frame(frame, classifier, yolo_model):
     colors, percentages = extract_colors(frame, k=6)
     tone = analyze_color_tone(colors, percentages)
 
-    if quality_status == "usable":
-        detections = detect_objects_yolo(frame, yolo_model)
-    else:
-        detections = []
+    detections = detect_objects_yolo(frame, yolo_model) if quality_status == "usable" else []
 
     composition = analyze_composition(frame, detections, quality_status)
     blocking = analyze_blocking(frame, detections, quality_status)
+    mise_en_scene = analyze_mise_en_scene(
+        frame, detections, composition, lighting, tone, quality_status
+    )
     symmetry_label, symmetry_score = analyze_symmetry(frame, quality_status)
 
     return {
@@ -535,6 +595,7 @@ def analyze_single_frame(frame, classifier, yolo_model):
         "tone": tone,
         "composition": composition,
         "blocking": blocking,
+        "mise_en_scene": mise_en_scene,
         "symmetry_label": symmetry_label,
         "symmetry_score": symmetry_score,
     }
@@ -542,11 +603,7 @@ def analyze_single_frame(frame, classifier, yolo_model):
 
 def aggregate_clip_palette(frame_results, num_colors=6):
     all_colors = []
-
-    usable_results = [
-        result for result in frame_results
-        if result["quality_status"] == "usable"
-    ]
+    usable_results = [r for r in frame_results if r["quality_status"] == "usable"]
 
     if not usable_results:
         return [(0, 0, 0)] * num_colors, [1 / num_colors] * num_colors
@@ -593,22 +650,19 @@ def generate_summary(
     palette_names,
     mood,
     dominant_composition=None,
-    dominant_blocking=None
+    dominant_blocking=None,
+    dominant_mise_en_scene=None
 ):
     palette_text = ", ".join(palette_names[:4])
 
-    composition_text = ""
-    if dominant_composition:
-        composition_text = f" The framing often uses {dominant_composition}."
-
-    blocking_text = ""
-    if dominant_blocking:
-        blocking_text = f" The blocking suggests {dominant_blocking}."
+    composition_text = f" The framing often uses {dominant_composition}." if dominant_composition else ""
+    blocking_text = f" The blocking suggests {dominant_blocking}." if dominant_blocking else ""
+    mise_text = f" The mise-en-scène appears {dominant_mise_en_scene}." if dominant_mise_en_scene else ""
 
     return (
         f"This visual predominantly uses {dominant_shot}, {dominant_lighting}, "
         f"and a {dominant_tone}-toned palette built around {palette_text}. "
-        f"Overall, it feels {mood}.{composition_text}{blocking_text}"
+        f"Overall, it feels {mood}.{composition_text}{blocking_text}{mise_text}"
     )
 
 
@@ -622,17 +676,10 @@ def metric_card(title, value):
             margin-bottom: 12px;
             background-color: rgba(255,255,255,0.04);
         ">
-            <div style="
-                font-size: 13px;
-                opacity: 0.70;
-                margin-bottom: 4px;
-            ">
+            <div style="font-size: 13px; opacity: 0.70; margin-bottom: 4px;">
                 {title}
             </div>
-            <div style="
-                font-size: 17px;
-                font-weight: 600;
-            ">
+            <div style="font-size: 17px; font-weight: 600;">
                 {value}
             </div>
         </div>
@@ -651,6 +698,7 @@ def display_frame_analysis(result):
 
     composition = result["composition"]
     blocking = result["blocking"]
+    mise = result["mise_en_scene"]
 
     st.markdown("### Cinematic Breakdown")
 
@@ -668,9 +716,19 @@ def display_frame_analysis(result):
         metric_card("Framing Note", composition["framing_note"])
         metric_card("Blocking", blocking["blocking_type"])
         metric_card("Balance", result["symmetry_label"])
+        metric_card("Visual Density", mise["visual_density"])
 
     st.markdown("### Blocking Read")
     st.info(blocking["blocking_summary"])
+
+    st.markdown("### Mise-en-scène")
+    metric_card("Setting", mise["setting_type"])
+    metric_card("Subject-Environment Relationship", mise["subject_environment_relationship"])
+
+    if mise["props_detected"]:
+        st.write("**Props / objects detected:**", ", ".join(mise["props_detected"]))
+
+    st.info(mise["mise_en_scene_summary"])
 
     if composition["object_labels"]:
         st.markdown("### Other Detected Objects")
@@ -682,11 +740,7 @@ def display_frame_analysis(result):
     if composition["composition_type"] == "rule-of-thirds composition":
         with st.expander("Show rule-of-thirds grid"):
             grid_image = draw_rule_of_thirds_grid(result["frame"])
-            st.image(
-                grid_image,
-                caption="Rule-of-thirds overlay",
-                use_container_width=True
-            )
+            st.image(grid_image, caption="Rule-of-thirds overlay", use_container_width=True)
 
     if composition["detections"]:
         with st.expander("Show YOLO detections"):
@@ -704,6 +758,7 @@ def display_technical_details(result, frame_number=None):
 
     composition = result["composition"]
     blocking = result["blocking"]
+    mise = result["mise_en_scene"]
 
     st.write(f"**Frame quality:** {result['quality_status']}")
     st.write(f"**Shot confidence:** {result['shot_score']:.2f}")
@@ -715,6 +770,9 @@ def display_technical_details(result, frame_number=None):
     st.write(f"**Blocking relationship:** {blocking['relationship']}")
     st.write(f"**Dominance:** {blocking['dominance']}")
     st.write(f"**Depth cue:** {blocking['depth']}")
+    st.write(f"**Mise-en-scène setting:** {mise['setting_type']}")
+    st.write(f"**Visual density:** {mise['visual_density']}")
+    st.write(f"**Subject-environment relationship:** {mise['subject_environment_relationship']}")
 
     hex_codes = [rgb_to_hex(c) for c in result["colors"]]
     st.write("**Palette HEX:**", " | ".join(hex_codes))
@@ -757,34 +815,18 @@ if mode == "Analyze Video Clip":
                 for frame in frames
             ]
 
-            usable_results = [
-                r for r in frame_results
-                if r["quality_status"] == "usable"
-            ]
+            usable_results = [r for r in frame_results if r["quality_status"] == "usable"]
 
             st.subheader("Clip-Level Summary")
 
             summary_source = usable_results if usable_results else frame_results
 
-            dominant_shot = Counter(
-                [r["shot"] for r in summary_source]
-            ).most_common(1)[0][0]
-
-            dominant_lighting = Counter(
-                [r["lighting"] for r in summary_source]
-            ).most_common(1)[0][0]
-
-            dominant_tone = Counter(
-                [r["tone"] for r in summary_source]
-            ).most_common(1)[0][0]
-
-            dominant_composition = Counter(
-                [r["composition"]["composition_type"] for r in summary_source]
-            ).most_common(1)[0][0]
-
-            dominant_blocking = Counter(
-                [r["blocking"]["blocking_type"] for r in summary_source]
-            ).most_common(1)[0][0]
+            dominant_shot = Counter([r["shot"] for r in summary_source]).most_common(1)[0][0]
+            dominant_lighting = Counter([r["lighting"] for r in summary_source]).most_common(1)[0][0]
+            dominant_tone = Counter([r["tone"] for r in summary_source]).most_common(1)[0][0]
+            dominant_composition = Counter([r["composition"]["composition_type"] for r in summary_source]).most_common(1)[0][0]
+            dominant_blocking = Counter([r["blocking"]["blocking_type"] for r in summary_source]).most_common(1)[0][0]
+            dominant_mise = Counter([r["mise_en_scene"]["visual_density"] for r in summary_source]).most_common(1)[0][0]
 
             clip_colors, clip_proportions = aggregate_clip_palette(frame_results)
             palette_names = simplify_hex_names(clip_colors)
@@ -797,7 +839,8 @@ if mode == "Analyze Video Clip":
                 palette_names,
                 mood,
                 dominant_composition,
-                dominant_blocking
+                dominant_blocking,
+                dominant_mise
             )
 
             col1, col2 = st.columns([1.2, 1])
@@ -808,6 +851,7 @@ if mode == "Analyze Video Clip":
                 st.write(f"**Dominant color tone:** {dominant_tone}")
                 st.write(f"**Dominant composition:** {dominant_composition}")
                 st.write(f"**Dominant blocking:** {dominant_blocking}")
+                st.write(f"**Dominant mise-en-scène:** {dominant_mise}")
                 st.write(f"**Overall mood:** {mood}")
 
             with col2:
@@ -866,7 +910,8 @@ if mode == "Analyze Single Still / Photo":
             palette_names,
             mood,
             result["composition"]["composition_type"],
-            result["blocking"]["blocking_type"]
+            result["blocking"]["blocking_type"],
+            result["mise_en_scene"]["visual_density"]
         )
 
         analysis_tab, technical_tab = st.tabs([
