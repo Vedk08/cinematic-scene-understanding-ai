@@ -1,219 +1,351 @@
 # 🎬 Cinematic Scene Understanding AI
 
-An AI-powered cinematic analysis tool that studies video clips, movie stills, and photographs through the lens of film language.
+A computer vision and AI-powered film analysis tool that helps filmmakers, cinematography enthusiasts, and film students analyze the visual language of movies.
 
-The system analyzes not only what appears in a frame, but how the frame is constructed — including shot type, lighting, color palette, composition, subject placement, blocking, and visual mood.
-
----
-
-## 🚀 Project Goal
-
-The long-term goal is to build a lightweight “cinema school” AI that can help users understand visual storytelling.
-
-It aims to answer questions like:
-
-- What kind of shot is this?
-- How is the lighting affecting the mood?
-- What color palette dominates the scene?
-- Where is the subject placed in the frame?
-- Does the composition follow rule-of-thirds or centered framing?
-- How are people blocked in relation to each other?
-- What visual mood does the scene create?
+The system extracts frames from videos or analyzes individual stills and automatically identifies cinematic characteristics such as framing, lighting, composition, blocking, color palette, aspect ratio, mise-en-scène, and visual storytelling techniques.
 
 ---
 
-## 🧠 Current System
+## Project Goal
 
-The project currently supports:
+Traditional AI tools can describe an image.
 
-### 🎞️ Video Clip Analysis
-Upload a video and the app will:
+This project attempts to analyze a frame the way a cinematographer, director, or film student would.
 
-- extract representative frames
-- analyze each frame
-- aggregate results into a clip-level summary
+The long-term goal is to build an AI-powered cinema school capable of understanding:
 
-### 🖼️ Still / Photo Analysis
-Upload a single movie still, screenshot, or photograph and the app will generate a cinematic breakdown.
-
----
-
-## ✅ Features Built So Far
-
-### Phase 1 — Video Upload & Frame Extraction
-- Built a Streamlit app
-- Uploaded video files
-- Extracted 5 representative frames using OpenCV
-- Displayed frames inside the app
+* Shot composition
+* Lighting
+* Blocking
+* Mise-en-scène
+* Color design
+* Aspect ratios
+* Visual storytelling
+* Cinematography techniques
+* Film metadata and production context
 
 ---
 
-### Phase 2 — Shot Type Classification
-- Added CLIP zero-shot image classification
-- Classified frames into:
-  - close-up shot
-  - medium shot
-  - wide shot
-- Displayed confidence scores
+# Current Features
+
+## Video Analysis
+
+Upload a video and automatically:
+
+* Extract representative frames
+* Analyze each frame individually
+* Generate a clip-level visual summary
 
 ---
 
-### Phase 3A — Lighting Analysis
-Initially tested CLIP for lighting classification, but it produced unreliable results.
+## Still Image Analysis
 
-The system was redesigned to use image statistics instead:
-
-- mean brightness
-- contrast
-- dark pixel ratio
-
-Lighting labels include:
-
-- low-key dramatic lighting
-- high-key lighting
-- soft lighting
-- neutral lighting
+Upload a single frame, screenshot, photograph, or movie still and receive a detailed cinematic breakdown.
 
 ---
 
-### Phase 3B — Color Palette & Tone Analysis
-- Extracted dominant colors using KMeans clustering
-- Displayed visual color palettes with separator lines
-- Classified overall tone as:
-  - warm
-  - cool
-  - neutral
+## Shot Type Classification
+
+Uses CLIP Zero-Shot Classification to identify:
+
+* Close-Up Shot
+* Medium Shot
+* Wide Shot
 
 ---
 
-### Phase 4 — Clip-Level Cinematic Summary
-- Aggregated frame-level outputs
-- Generated dominant clip-level attributes:
-  - dominant shot type
-  - dominant lighting
-  - dominant color tone
-  - overall mood
-  - clip palette
-- Produced a written scene summary
+## Lighting Analysis
+
+Detects:
+
+* Low-Key Dramatic Lighting
+* High-Key Lighting
+* Soft Lighting
+* Neutral Lighting
+
+Also calculates:
+
+* Brightness
+* Contrast
+* Dark Pixel Ratio
 
 ---
 
-### Phase 5 — Single Still / Photo Mode
-- Added support for individual images
-- Reused the same cinematic analysis pipeline for stills and photographs
-- Enabled analysis of movie frames, screenshots, and visual references
+## Lighting Setup Inference (Phase 11)
+
+Attempts to infer:
+
+* Key Light Direction
+* Fill Strength
+* Shadow Style
+* Vertical Light Distribution
+* Backlight / Rim Light Possibilities
+* Practical Light Source Guesses
+
+Generates a lighting interpretation based on image brightness distribution.
 
 ---
 
-### Phase 6 — Composition & Subject Placement
-- Added composition analysis
-- Detected subject placement:
-  - left third
-  - center
-  - right third
-- Added basic framing notes:
-  - tight subject framing
-  - moderate negative space
-  - heavy negative space
-- Added rule-of-thirds composition logic
+## Color Analysis
+
+Extracts dominant colors using K-Means clustering.
+
+Provides:
+
+* Dominant Color Palette
+* Color Tone Classification
+
+  * Warm
+  * Cool
+  * Neutral
+* Palette HEX Values
 
 ---
 
-### Phase 6.3 — YOLO-Based Subject/Object Detection
-Earlier OpenCV HOG and Haar detectors were tested but were unreliable for cinematic frames.
+## Aspect Ratio Analysis
 
-The system was upgraded to YOLO for:
+Identifies likely frame format:
 
-- person detection
-- object detection
-- subject placement
-- composition analysis
-- future mise-en-scène analysis
+* 4:3
+* 16:9
+* 1.85:1
+* 2.39:1
+* Vertical Formats
+* Square Formats
 
----
-
-### Phase 7 — Blocking & Scene Dynamics
-- Added single-subject and multi-subject blocking logic
-- Analyzed:
-  - number of people
-  - subject dominance
-  - spacing between people
-  - foreground/background separation
-  - emotional distance / intimacy cues
-
-Example output:
-
-> The frame uses single-subject blocking with a dominant subject, suggesting focus on an individual presence within the scene.
+Provides visual interpretation of how frame geometry affects storytelling.
 
 ---
 
-### Phase 7.1 — UI Improvements
-- Moved technical metrics into a separate tab
-- Added cleaner cinematic report-style cards
-- Added optional rule-of-thirds grid overlay
-- Kept YOLO detection visualization available in expanders
+## Composition Analysis
+
+Analyzes:
+
+* Rule of Thirds
+* Subject Placement
+* Negative Space
+* Framing Tightness
+
+Can display:
+
+* Rule-of-Thirds Overlay
 
 ---
 
-### Phase 8 — Mise-en-scène Analysis
-- Added a mise-en-scène layer using YOLO object detections, subject placement, lighting, and color tone
-- Estimated:
-  - setting type
-  - visual density
-  - props / objects detected
-  - subject-environment relationship
-- Generated a written mise-en-scène summary for each analyzed frame
+## Object Detection (YOLOv8)
 
-This phase moves the project closer to a cinema-school AI by connecting objects, setting, lighting, color, and subject placement into a broader visual interpretation.
+Detects:
 
-### Phase 9 — Aspect Ratio & Frame Geometry
+* People
+* Props
+* Objects
 
-* Added aspect ratio detection for both video frames and still images
-* Calculated frame width, height, and width-to-height ratio
-* Mapped frames to common cinematic/social formats:
+Used to improve:
 
-  * 4:3 classic academy ratio
-  * 16:9 standard widescreen
-  * 1.85:1 theatrical widescreen
-  * 2.39:1 anamorphic widescreen
-  * square format
-  * vertical/social format
-* Added cinematic interpretation of how frame shape affects the visual feeling
-
-This phase helps the system understand not only what is inside the frame, but also the shape of the frame itself.
-
-
-## 🛠️ Tech Stack
-
-- Python
-- Streamlit
-- OpenCV
-- NumPy
-- Pillow
-- Scikit-learn
-- Hugging Face Transformers
-- CLIP
-- Ultralytics YOLO
+* Composition Analysis
+* Blocking Analysis
+* Mise-en-scène Analysis
 
 ---
 
-## 🧩 Architecture
+## Blocking Analysis
 
-The project uses a hybrid AI + computer vision approach:
+Identifies:
 
-```text
-Video / Image Input
-        ↓
-Frame Extraction / Image Loading
-        ↓
-CLIP Shot Classification
-        ↓
-OpenCV Lighting Analysis
-        ↓
-KMeans Color Palette Extraction
-        ↓
-YOLO Subject & Object Detection
-        ↓
-Composition + Blocking Logic
-        ↓
-Cinematic Summary
+* Single Subject Blocking
+* Two-Person Staging
+* Character Separation
+* Visual Dominance
+* Spatial Relationships
+
+Provides natural language interpretation of character arrangement.
+
+---
+
+## Symmetry Analysis
+
+Evaluates:
+
+* Balanced Composition
+* Moderate Symmetry
+* Asymmetrical Frames
+
+---
+
+## Mise-en-scène Analysis
+
+Attempts to understand:
+
+* Visual Density
+* Environment Type
+* Props
+* Subject-Environment Relationship
+
+Provides cinematic interpretation rather than simple object detection.
+
+---
+
+## Visual Language Interpretation
+
+Combines:
+
+* Shot Type
+* Lighting
+* Color
+* Composition
+* Blocking
+* Mise-en-scène
+
+Into a film-school style explanation of how the image communicates meaning.
+
+---
+
+## Film Knowledge Search (Phase 13)
+
+Integrated OMDb API support.
+
+Search any film and retrieve:
+
+* Poster
+* Director
+* Cast
+* Genre
+* Runtime
+* IMDb Rating
+* Plot Summary
+
+Includes research prompts for deeper cinematography analysis.
+
+---
+
+# Technical Stack
+
+### Frontend
+
+* Streamlit
+
+### Computer Vision
+
+* OpenCV
+
+### Object Detection
+
+* YOLOv8
+
+### Machine Learning
+
+* CLIP
+* Hugging Face Transformers
+
+### Data Processing
+
+* NumPy
+* Scikit-Learn
+
+### Film Metadata
+
+* OMDb API
+
+---
+
+# Project Roadmap
+
+## Completed
+
+### Phase 1
+
+Video Upload & Frame Extraction
+
+### Phase 2
+
+Shot Classification using CLIP
+
+### Phase 3
+
+Lighting & Color Analysis
+
+### Phase 4
+
+Clip-Level Summaries
+
+### Phase 5
+
+Still Image Analysis
+
+### Phase 6
+
+Object Detection & Composition Analysis
+
+### Phase 7
+
+Blocking & Mise-en-scène Analysis
+
+### Phase 8
+
+Visual Interpretation Layer
+
+### Phase 9
+
+Technical Details Separation
+
+### Phase 10
+
+Advanced Cinematic UI & Analysis Cards
+
+### Phase 11
+
+Lighting Setup Inference
+
+### Phase 12
+
+Film Research Assistant
+
+### Phase 13
+
+OMDb Film Metadata Integration
+
+---
+
+## Upcoming
+
+### Phase 14
+
+Exportable Cinematic Reports (PDF)
+
+### Phase 15
+
+Movie Knowledge Database
+
+### Phase 16
+
+Advanced Cinematography Style Detection
+
+### Phase 17
+
+Director / Cinematographer Signature Analysis
+
+### Phase 18
+
+AI-Powered Film School Assistant
+
+---
+
+# Future Vision
+
+Eventually the system should be capable of:
+
+* Understanding cinematography at a film-school level
+* Inferring lighting setups
+* Identifying visual motifs
+* Comparing directors' visual styles
+* Explaining scenes visually
+* Teaching filmmaking concepts interactively
+
+The goal is not simply image recognition.
+
+The goal is cinematic understanding.
+
+---
+
+Created by Vedansh Kumar
+MSc Computer Science — TU Dresden
