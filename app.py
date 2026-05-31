@@ -12,10 +12,41 @@ from transformers import pipeline
 from ultralytics import YOLO
 
 
-st.title("🎬 Cinematic Scene Understanding AI - Phase 9")
+st.title("🎬 Cinematic Scene Understanding AI - Phase 10")
 st.write(
-    "Analyze video clips or stills for shot type, lighting, color, aspect ratio, composition, blocking, objects, and mise-en-scène."
+    "Analyze video clips or stills for shot type, lighting, color, aspect ratio, composition, blocking, objects, mise-en-scène, and visual interpretation."
 )
+
+
+def show_film_terms_glossary():
+    with st.expander("Film Terms Glossary"):
+        st.markdown(
+            """
+            **Mise-en-scène**  
+            Everything arranged inside the frame: setting, props, lighting, actors, blocking, costume, color, and visual design.
+
+            **Blocking**  
+            How actors or subjects are positioned and arranged inside the scene.
+
+            **Low-key lighting**  
+            Dark, shadow-heavy lighting often used for drama, tension, mystery, or noir-like mood.
+
+            **High-key lighting**  
+            Bright, even lighting with fewer shadows, often used for clean, open, or lighter moods.
+
+            **Rule of thirds**  
+            A composition principle where the frame is divided into thirds and important subjects are placed near those lines.
+
+            **Aspect ratio**  
+            The width-to-height shape of the frame, such as 16:9, 4:3, or 2.39:1.
+
+            **Visual interpretation**  
+            A film-school style reading of what the combined visual elements may communicate emotionally or narratively.
+            """
+        )
+
+
+show_film_terms_glossary()
 
 
 @st.cache_resource
@@ -45,6 +76,7 @@ def extract_frames(video_path, num_frames=5):
     for idx in frame_indices:
         cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
         success, frame = cap.read()
+
         if success:
             frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
@@ -64,6 +96,7 @@ def get_frame_quality(frame):
 
     if mean < 10 and contrast < 5:
         return "unusable_black_frame", mean, contrast
+
     if mean < 25 and contrast < 10:
         return "too_dark_to_analyze_reliably", mean, contrast
 
@@ -169,6 +202,7 @@ def analyze_color_tone(colors, percentages):
         return "warm"
     elif b > r + 20:
         return "cool"
+
     return "neutral"
 
 
@@ -244,7 +278,12 @@ def detect_objects_yolo(frame, yolo_model, confidence_threshold=0.25):
         detections.append({
             "label": names[class_id],
             "confidence": confidence,
-            "box": (int(x1), int(y1), int(x2 - x1), int(y2 - y1)),
+            "box": (
+                int(x1),
+                int(y1),
+                int(x2 - x1),
+                int(y2 - y1)
+            )
         })
 
     return detections
@@ -464,8 +503,15 @@ def analyze_mise_en_scene(frame, detections, composition, lighting, tone, qualit
     object_area = sum(d["box"][2] * d["box"][3] for d in object_detections)
     object_area_ratio = object_area / frame_area if frame_area > 0 else 0
 
-    indoor_objects = {"chair", "couch", "bed", "dining table", "tv", "laptop", "book", "clock", "vase", "refrigerator", "microwave", "oven"}
-    outdoor_objects = {"car", "truck", "bus", "traffic light", "stop sign", "bicycle", "motorcycle", "bench", "boat"}
+    indoor_objects = {
+        "chair", "couch", "bed", "dining table", "tv", "laptop",
+        "book", "clock", "vase", "refrigerator", "microwave", "oven"
+    }
+
+    outdoor_objects = {
+        "car", "truck", "bus", "traffic light", "stop sign",
+        "bicycle", "motorcycle", "bench", "boat"
+    }
 
     if any(obj in indoor_objects for obj in object_labels):
         setting_type = "interior / domestic or controlled space"
@@ -508,6 +554,86 @@ def analyze_mise_en_scene(frame, detections, composition, lighting, tone, qualit
         "subject_environment_relationship": relationship,
         "mise_en_scene_summary": summary
     }
+
+
+def interpret_visual_language(result):
+    shot = result["shot"]
+    lighting = result["lighting"]
+    tone = result["tone"]
+    composition = result["composition"]
+    blocking = result["blocking"]
+    mise = result["mise_en_scene"]
+    aspect = result["aspect_ratio"]
+
+    interpretation_parts = []
+
+    if shot == "close-up shot":
+        interpretation_parts.append("The close-up framing creates emotional emphasis and directs attention toward the subject.")
+    elif shot == "medium shot":
+        interpretation_parts.append("The medium framing balances character presence with surrounding context.")
+    elif shot == "wide shot":
+        interpretation_parts.append("The wide framing gives importance to space, environment, and spatial relationships.")
+
+    if lighting == "low-key dramatic lighting":
+        interpretation_parts.append("The low-key lighting adds tension, mystery, or dramatic weight.")
+    elif lighting == "high-key lighting":
+        interpretation_parts.append("The high-key lighting creates a cleaner, brighter, and more open feeling.")
+    elif lighting == "soft lighting":
+        interpretation_parts.append("The soft lighting creates a gentler, more intimate visual mood.")
+
+    if tone == "warm":
+        interpretation_parts.append("The warm color tone can suggest intimacy, memory, comfort, heat, or emotional closeness.")
+    elif tone == "cool":
+        interpretation_parts.append("The cool color tone can suggest distance, melancholy, night, isolation, or restraint.")
+    else:
+        interpretation_parts.append("The neutral color tone keeps the image visually restrained and less emotionally exaggerated.")
+
+    if composition["composition_type"] == "rule-of-thirds composition":
+        interpretation_parts.append(
+            f"The subject placement on the {composition['subject_position']} creates directional visual tension and avoids a purely centered frame."
+        )
+    elif composition["composition_type"] == "centered composition":
+        interpretation_parts.append("The centered composition gives the subject visual authority, stillness, or formal emphasis.")
+
+    if blocking["blocking_type"] == "single-subject blocking":
+        interpretation_parts.append("The blocking isolates one subject, making the frame feel focused around individual presence.")
+    elif "two-person" in blocking["blocking_type"] or "conversational" in blocking["blocking_type"]:
+        interpretation_parts.append("The blocking creates a relationship between subjects, suggesting interaction or emotional exchange.")
+    elif "separated" in blocking["blocking_type"]:
+        interpretation_parts.append("The physical separation between subjects may suggest emotional distance or conflict.")
+
+    if mise["visual_density"] == "minimal mise-en-scène":
+        interpretation_parts.append("The minimal mise-en-scène keeps attention on subject, mood, and composition rather than props.")
+    elif mise["visual_density"] == "dense / cluttered mise-en-scène":
+        interpretation_parts.append("The dense mise-en-scène creates a more textured, busy, or environment-driven frame.")
+
+    interpretation_parts.append(aspect["interpretation"])
+
+    return " ".join(interpretation_parts)
+
+
+def interpret_clip_visual_language(frame_results):
+    usable = [r for r in frame_results if r["quality_status"] == "usable"]
+
+    if not usable:
+        return "The sampled frames are not visually reliable enough for a clip-level interpretation."
+
+    dominant_shot = Counter([r["shot"] for r in usable]).most_common(1)[0][0]
+    dominant_lighting = Counter([r["lighting"] for r in usable]).most_common(1)[0][0]
+    dominant_tone = Counter([r["tone"] for r in usable]).most_common(1)[0][0]
+    dominant_composition = Counter([r["composition"]["composition_type"] for r in usable]).most_common(1)[0][0]
+    dominant_blocking = Counter([r["blocking"]["blocking_type"] for r in usable]).most_common(1)[0][0]
+    dominant_mise = Counter([r["mise_en_scene"]["visual_density"] for r in usable]).most_common(1)[0][0]
+    dominant_format = Counter([r["aspect_ratio"]["format_type"] for r in usable]).most_common(1)[0][0]
+
+    return (
+        f"Across the sampled frames, the clip mainly uses {dominant_shot}, {dominant_lighting}, "
+        f"and a {dominant_tone} palette. The dominant frame format is {dominant_format}, "
+        f"while the composition tends toward {dominant_composition}. The blocking pattern reads as "
+        f"{dominant_blocking}, and the mise-en-scène appears {dominant_mise}. Together, these choices "
+        f"suggest a controlled visual design where framing, lighting, color, and staging work together "
+        f"to shape the scene's mood and viewer attention."
+    )
 
 
 def draw_yolo_boxes(frame, detections):
@@ -579,7 +705,7 @@ def analyze_single_frame(frame, classifier, yolo_model):
     mise_en_scene = analyze_mise_en_scene(frame, detections, composition, lighting, tone, quality_status)
     symmetry_label, symmetry_score = analyze_symmetry(frame, quality_status)
 
-    return {
+    result = {
         "frame": frame,
         "quality_status": quality_status,
         "shot_results": shot_results,
@@ -599,6 +725,9 @@ def analyze_single_frame(frame, classifier, yolo_model):
         "symmetry_label": symmetry_label,
         "symmetry_score": symmetry_score,
     }
+
+    result["visual_interpretation"] = interpret_visual_language(result)
+    return result
 
 
 def aggregate_clip_palette(frame_results, num_colors=6):
@@ -643,7 +772,17 @@ def infer_mood(dominant_shot, dominant_lighting, dominant_tone):
     return "cinematic and visually controlled"
 
 
-def generate_summary(dominant_shot, dominant_lighting, dominant_tone, palette_names, mood, dominant_composition=None, dominant_blocking=None, dominant_mise_en_scene=None, dominant_format=None):
+def generate_summary(
+    dominant_shot,
+    dominant_lighting,
+    dominant_tone,
+    palette_names,
+    mood,
+    dominant_composition=None,
+    dominant_blocking=None,
+    dominant_mise_en_scene=None,
+    dominant_format=None
+):
     palette_text = ", ".join(palette_names[:4])
 
     composition_text = f" The framing often uses {dominant_composition}." if dominant_composition else ""
@@ -712,6 +851,9 @@ def display_frame_analysis(result):
         metric_card("Blocking", blocking["blocking_type"])
         metric_card("Balance", result["symmetry_label"])
         metric_card("Visual Density", mise["visual_density"])
+
+    st.markdown("### Visual Interpretation")
+    st.info(result["visual_interpretation"])
 
     st.markdown("### Frame Geometry")
     st.info(aspect["interpretation"])
@@ -821,6 +963,7 @@ if mode == "Analyze Video Clip":
             clip_colors, clip_proportions = aggregate_clip_palette(frame_results)
             palette_names = simplify_hex_names(clip_colors)
             mood = infer_mood(dominant_shot, dominant_lighting, dominant_tone)
+            clip_interpretation = interpret_clip_visual_language(frame_results)
 
             summary = generate_summary(
                 dominant_shot,
@@ -852,6 +995,9 @@ if mode == "Analyze Video Clip":
 
             st.write("**Scene summary:**")
             st.info(summary)
+
+            st.write("**Visual interpretation:**")
+            st.info(clip_interpretation)
 
             st.markdown("---")
 
