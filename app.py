@@ -1,21 +1,22 @@
 import os
 import tempfile
 from collections import Counter
+from datetime import datetime
 
 import cv2
 import numpy as np
+import requests
 import streamlit as st
 import streamlit.components.v1 as components
 from PIL import Image
 from sklearn.cluster import KMeans
 from transformers import pipeline
 from ultralytics import YOLO
-import requests 
 
 
-st.title("🎬 Cinematic Scene Understanding AI - Phase 12")
+st.title("🎬 Cinematic Scene Understanding AI - Phase 14")
 st.write(
-    "Analyze video clips or stills for shot type, lighting, color, aspect ratio, composition, blocking, mise-en-scène, visual interpretation, and lighting setup inference."
+    "A visual film analysis tool for understanding shot type, lighting, color, composition, blocking, mise-en-scène, and film knowledge."
 )
 
 
@@ -55,6 +56,7 @@ def show_film_terms_glossary():
             """
         )
 
+
 def fetch_movie_metadata(title):
     api_key = st.secrets.get("OMDB_API_KEY", "")
 
@@ -73,24 +75,24 @@ def fetch_movie_metadata(title):
         data = response.json()
 
         if data.get("Response") == "False":
-            return None, data.get("Error", "Movie not found.")
+            return None, data.get("Error", "Film not found.")
 
         return data, None
 
     except Exception as e:
-        return None, f"API request failed: {str(e)}"
+        return None, f"Film knowledge request failed: {str(e)}"
 
 
 def show_film_knowledge_panel():
-    with st.expander("Film Knowledge / Metadata Search"):
-        film_name = st.text_input("Enter a film name")
+    with st.expander("Film Knowledge"):
+        film_name = st.text_input("Enter a film title")
 
         if film_name:
             movie_data, error = fetch_movie_metadata(film_name)
 
             if error:
                 st.warning(error)
-                return
+                return None
 
             poster = movie_data.get("Poster", "N/A")
 
@@ -109,26 +111,22 @@ def show_film_knowledge_panel():
                 st.write(f"**IMDb Rating:** {movie_data.get('imdbRating', 'N/A')}")
                 st.write(f"**Actors:** {movie_data.get('Actors', 'N/A')}")
 
-            st.markdown("### Plot")
+            st.markdown("### Story Context")
             st.info(movie_data.get("Plot", "No plot available."))
 
-            st.markdown("### Research Prompts")
-            st.code(f"{film_name} cinematography analysis")
-            st.code(f"{film_name} director visual style")
-            st.code(f"{film_name} cinematographer interview")
-            st.code(f"{film_name} lighting breakdown")
-            st.code(f"{film_name} production design analysis")
-
-            st.markdown("### How to Use This With Your Visual Analysis")
+            st.markdown("### How to Use This")
             st.info(
-                "Compare this film metadata with the app's visual output. Look at whether the detected "
-                "lighting, color tone, aspect ratio, blocking, and mise-en-scène match the known director, "
-                "genre, and visual style of the film."
+                "Compare the film information with the visual analysis below. Notice whether the lighting, color, "
+                "blocking, aspect ratio, and mise-en-scène support the film's genre, tone, and story world."
             )
 
-show_film_terms_glossary()
-show_film_knowledge_panel()
+            return movie_data
 
+    return None
+
+
+show_film_terms_glossary()
+movie_data = show_film_knowledge_panel()
 
 
 @st.cache_resource
@@ -246,7 +244,7 @@ def infer_lighting_setup(frame, lighting_label, mean_brightness, contrast, dark_
         shadow_style = "balanced shadow structure"
 
     if contrast > 55 and dark_ratio > 0.35:
-        backlight_guess = "possible rim/backlight separation, but not certain"
+        backlight_guess = "possible rim/backlight separation"
     elif contrast < 30:
         backlight_guess = "little obvious backlight separation"
     else:
@@ -738,7 +736,9 @@ def interpret_visual_language(result):
     elif lighting == "soft lighting":
         interpretation_parts.append("The soft lighting creates a gentler, more intimate visual mood.")
 
-    interpretation_parts.append(f"The inferred lighting setup suggests {lighting_setup['key_direction']} key light with {lighting_setup['fill_strength']}.")
+    interpretation_parts.append(
+        f"The lighting setup suggests a {lighting_setup['key_direction']} key light with {lighting_setup['fill_strength']}."
+    )
 
     if tone == "warm":
         interpretation_parts.append("The warm color tone can suggest intimacy, memory, comfort, heat, or emotional closeness.")
@@ -794,30 +794,6 @@ def interpret_clip_visual_language(frame_results):
         f"often suggests a {dominant_key} key-light direction. Together, these choices suggest a controlled "
         f"visual design where framing, lighting, color, and staging work together to shape the scene's mood and viewer attention."
     )
-
-
-def draw_yolo_boxes(frame, detections):
-    annotated = frame.copy()
-
-    for detection in detections:
-        x, y, w, h = detection["box"]
-        label = detection["label"]
-        confidence = detection["confidence"]
-
-        color = (0, 255, 0) if label == "person" else (255, 0, 0)
-
-        cv2.rectangle(annotated, (x, y), (x + w, y + h), color, 3)
-        cv2.putText(
-            annotated,
-            f"{label} {confidence:.2f}",
-            (x, max(y - 10, 20)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            color,
-            2
-        )
-
-    return annotated
 
 
 def draw_rule_of_thirds_grid(frame):
@@ -983,13 +959,56 @@ def metric_card(title, value):
     )
 
 
+def create_report_text(title, summary, visual_interpretation, movie_data=None):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    report = f"""
+CINEMATIC SCENE UNDERSTANDING AI
+Generated: {now}
+
+TITLE
+{title}
+
+"""
+
+    if movie_data:
+        report += f"""
+FILM KNOWLEDGE
+Film: {movie_data.get('Title', 'N/A')}
+Year: {movie_data.get('Year', 'N/A')}
+Director: {movie_data.get('Director', 'N/A')}
+Genre: {movie_data.get('Genre', 'N/A')}
+Runtime: {movie_data.get('Runtime', 'N/A')}
+IMDb Rating: {movie_data.get('imdbRating', 'N/A')}
+
+Story Context:
+{movie_data.get('Plot', 'N/A')}
+
+"""
+
+    report += f"""
+SCENE SUMMARY
+{summary}
+
+VISUAL INTERPRETATION
+{visual_interpretation}
+
+NOTE
+This report is an AI-assisted visual interpretation. It should be treated as a film-study aid, not an absolute truth about the production.
+"""
+
+    return report.strip()
+
+
 def display_frame_analysis(result):
     st.image(result["frame"], caption="Analyzed frame", use_container_width=True)
 
     if result["quality_status"] == "unusable_black_frame":
-        st.warning("This frame appears to be almost completely black, so cinematic composition analysis is unavailable.")
-    elif result["quality_status"] == "too_dark_to_analyze_reliably":
-        st.warning("This frame is very dark, so composition and subject detection may be unreliable.")
+        st.warning("This frame is too dark for reliable visual analysis.")
+        return
+
+    if result["quality_status"] == "too_dark_to_analyze_reliably":
+        st.warning("This frame is very dark, so some analysis may be less reliable.")
 
     composition = result["composition"]
     blocking = result["blocking"]
@@ -1005,30 +1024,26 @@ def display_frame_analysis(result):
         metric_card("Shot", result["shot"])
         metric_card("Lighting", result["lighting"])
         metric_card("Color Tone", result["tone"])
-        metric_card("Aspect Ratio", f"{aspect['aspect_ratio']:.2f}:1")
         metric_card("Frame Format", aspect["format_type"])
         metric_card("Composition", composition["composition_type"])
-        metric_card("Subject Placement", composition["subject_position"])
 
     with col2:
+        metric_card("Subject Placement", composition["subject_position"])
         metric_card("People Detected", composition["person_count"])
-        metric_card("Framing Note", composition["framing_note"])
+        metric_card("Framing", composition["framing_note"])
         metric_card("Blocking", blocking["blocking_type"])
-        metric_card("Balance", result["symmetry_label"])
         metric_card("Visual Density", mise["visual_density"])
 
-    st.markdown("### Lighting Setup Inference")
+    st.markdown("### Lighting Read")
     col3, col4 = st.columns(2)
 
     with col3:
         metric_card("Likely Key Direction", lighting_setup["key_direction"])
-        metric_card("Fill Strength", lighting_setup["fill_strength"])
-        metric_card("Shadow Style", lighting_setup["shadow_style"])
+        metric_card("Fill", lighting_setup["fill_strength"])
 
     with col4:
-        metric_card("Vertical Light", lighting_setup["vertical_light"])
-        metric_card("Backlight / Rim", lighting_setup["backlight_guess"])
-        metric_card("Practical Source Guess", lighting_setup["practical_guess"])
+        metric_card("Shadow Style", lighting_setup["shadow_style"])
+        metric_card("Practical Source", lighting_setup["practical_guess"])
 
     st.info(lighting_setup["setup_summary"])
 
@@ -1038,7 +1053,7 @@ def display_frame_analysis(result):
     st.markdown("### Frame Geometry")
     st.info(aspect["interpretation"])
 
-    st.markdown("### Blocking Read")
+    st.markdown("### Blocking")
     st.info(blocking["blocking_summary"])
 
     st.markdown("### Mise-en-scène")
@@ -1046,68 +1061,17 @@ def display_frame_analysis(result):
     metric_card("Subject-Environment Relationship", mise["subject_environment_relationship"])
 
     if mise["props_detected"]:
-        st.write("**Props / objects detected:**", ", ".join(mise["props_detected"]))
+        st.write("**Visible objects / props:**", ", ".join(mise["props_detected"]))
 
     st.info(mise["mise_en_scene_summary"])
-
-    if composition["object_labels"]:
-        st.markdown("### Other Detected Objects")
-        st.write(", ".join(sorted(set(composition["object_labels"]))))
 
     st.markdown("### Dominant Color Palette")
     show_palette(result["colors"], result["proportions"])
 
     if composition["composition_type"] == "rule-of-thirds composition":
-        with st.expander("Show rule-of-thirds grid"):
+        with st.expander("Show rule-of-thirds guide"):
             grid_image = draw_rule_of_thirds_grid(result["frame"])
-            st.image(grid_image, caption="Rule-of-thirds overlay", use_container_width=True)
-
-    if composition["detections"]:
-        with st.expander("Show YOLO detections"):
-            annotated = draw_yolo_boxes(result["frame"], composition["detections"])
-            st.image(annotated, caption="YOLO detections: green = person, blue = objects", use_container_width=True)
-
-
-def display_technical_details(result, frame_number=None):
-    if frame_number is not None:
-        st.write(f"### Frame {frame_number}")
-
-    composition = result["composition"]
-    blocking = result["blocking"]
-    mise = result["mise_en_scene"]
-    aspect = result["aspect_ratio"]
-    lighting_setup = result["lighting_setup"]
-
-    st.write(f"**Frame quality:** {result['quality_status']}")
-    st.write(f"**Frame size:** {aspect['width']} x {aspect['height']}")
-    st.write(f"**Aspect ratio:** {aspect['aspect_ratio']:.3f}")
-    st.write(f"**Closest format:** {aspect['closest_format']}")
-    st.write(f"**Format type:** {aspect['format_type']}")
-    st.write(f"**Shot confidence:** {result['shot_score']:.2f}")
-    st.write(f"**Mean brightness:** {result['mean_brightness']:.1f}")
-    st.write(f"**Contrast:** {result['contrast']:.1f}")
-    st.write(f"**Dark pixel ratio:** {result['dark_ratio']:.2f}")
-    st.write(f"**Left brightness:** {lighting_setup['left_brightness']:.1f}")
-    st.write(f"**Right brightness:** {lighting_setup['right_brightness']:.1f}")
-    st.write(f"**Top brightness:** {lighting_setup['top_brightness']:.1f}")
-    st.write(f"**Bottom brightness:** {lighting_setup['bottom_brightness']:.1f}")
-    st.write(f"**Subject area ratio:** {composition['subject_area_ratio']:.3f}")
-    st.write(f"**Symmetry score:** {result['symmetry_score']:.1f}")
-    st.write(f"**Blocking relationship:** {blocking['relationship']}")
-    st.write(f"**Dominance:** {blocking['dominance']}")
-    st.write(f"**Depth cue:** {blocking['depth']}")
-    st.write(f"**Mise-en-scène setting:** {mise['setting_type']}")
-    st.write(f"**Visual density:** {mise['visual_density']}")
-    st.write(f"**Subject-environment relationship:** {mise['subject_environment_relationship']}")
-
-    hex_codes = [rgb_to_hex(c) for c in result["colors"]]
-    st.write("**Palette HEX:**", " | ".join(hex_codes))
-
-    st.write("**All shot scores:**")
-    for shot_result in result["shot_results"]:
-        st.write(f"- {shot_result['label']}: {shot_result['score']:.3f}")
-
-    st.markdown("---")
+            st.image(grid_image, caption="Rule-of-thirds guide", use_container_width=True)
 
 
 classifier = load_classifier()
@@ -1178,30 +1142,36 @@ if mode == "Analyze Video Clip":
                 st.write(f"**Overall mood:** {mood}")
 
             with col2:
-                st.write("**Clip palette:**")
+                st.write("**Clip Palette:**")
                 show_palette(clip_colors, clip_proportions, height=55)
 
-            st.write("**Scene summary:**")
+            st.write("**Scene Summary:**")
             st.info(summary)
 
-            st.write("**Visual interpretation:**")
+            st.write("**Visual Interpretation:**")
             st.info(clip_interpretation)
 
+            report_text = create_report_text(
+                "Video Clip Analysis",
+                summary,
+                clip_interpretation,
+                movie_data
+            )
+
+            st.download_button(
+                label="Download Cinematic Report",
+                data=report_text,
+                file_name="cinematic_analysis_report.txt",
+                mime="text/plain"
+            )
+
             st.markdown("---")
+            st.subheader("Frame-by-Frame Analysis")
 
-            analysis_tab, technical_tab = st.tabs(["Cinematic Analysis", "Technical Details"])
-
-            with analysis_tab:
-                st.subheader("Frame-by-Frame Analysis")
-                for i, result in enumerate(frame_results):
-                    st.write(f"### Frame {i + 1}")
-                    display_frame_analysis(result)
-                    st.markdown("---")
-
-            with technical_tab:
-                st.subheader("Technical Details")
-                for i, result in enumerate(frame_results):
-                    display_technical_details(result, frame_number=i + 1)
+            for i, result in enumerate(frame_results):
+                st.write(f"### Frame {i + 1}")
+                display_frame_analysis(result)
+                st.markdown("---")
 
         else:
             st.error("Could not extract frames from this video.")
@@ -1234,15 +1204,22 @@ if mode == "Analyze Single Still / Photo":
             result["lighting_setup"]["key_direction"]
         )
 
-        analysis_tab, technical_tab = st.tabs(["Cinematic Analysis", "Technical Details"])
+        st.subheader("Still / Photo Analysis")
+        display_frame_analysis(result)
 
-        with analysis_tab:
-            st.subheader("Still / Photo Analysis")
-            display_frame_analysis(result)
+        st.write("**Visual Summary:**")
+        st.info(summary)
 
-            st.write("**Visual summary:**")
-            st.info(summary)
+        report_text = create_report_text(
+            "Still / Photo Analysis",
+            summary,
+            result["visual_interpretation"],
+            movie_data
+        )
 
-        with technical_tab:
-            st.subheader("Technical Details")
-            display_technical_details(result)
+        st.download_button(
+            label="Download Cinematic Report",
+            data=report_text,
+            file_name="cinematic_analysis_report.txt",
+            mime="text/plain"
+        )
