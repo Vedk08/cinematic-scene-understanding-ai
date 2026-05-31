@@ -155,6 +155,23 @@ Example output:
 
 ---
 
+### Phase 8 — Mise-en-scène Analysis
+- Added a mise-en-scène layer using YOLO object detections, subject placement, lighting, and color tone
+- Estimated:
+  - setting type
+  - visual density
+  - props / objects detected
+  - subject-environment relationship
+- Generated a written mise-en-scène summary for each analyzed frame
+
+This phase moves the project closer to a cinema-school AI by connecting objects, setting, lighting, color, and subject placement into a broader visual interpretation.
+
+## 🚧 Next Phase
+
+### Phase 9 — Aspect Ratio and Frame Geometry
+
+The next step is to analyze frame shape and cinematic format, including 16:9, 4:3, 1.85:1, 2.39:1, square, and vertical formats.
+
 ## 🛠️ Tech Stack
 
 - Python
