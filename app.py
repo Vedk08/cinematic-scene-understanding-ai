@@ -12,9 +12,9 @@ from transformers import pipeline
 from ultralytics import YOLO
 
 
-st.title("🎬 Cinematic Scene Understanding AI - Phase 10")
+st.title("🎬 Cinematic Scene Understanding AI - Phase 11")
 st.write(
-    "Analyze video clips or stills for shot type, lighting, color, aspect ratio, composition, blocking, objects, mise-en-scène, and visual interpretation."
+    "Analyze video clips or stills for shot type, lighting, color, aspect ratio, composition, blocking, mise-en-scène, visual interpretation, and lighting setup inference."
 )
 
 
@@ -28,6 +28,18 @@ def show_film_terms_glossary():
             **Blocking**  
             How actors or subjects are positioned and arranged inside the scene.
 
+            **Key light**  
+            The main light source shaping the subject.
+
+            **Fill light**  
+            A softer light used to reduce shadows created by the key light.
+
+            **Backlight / Rim light**  
+            Light coming from behind or the side-back of the subject, often separating them from the background.
+
+            **Practical light**  
+            A visible light source inside the scene, such as a lamp, candle, window, TV, or neon sign.
+
             **Low-key lighting**  
             Dark, shadow-heavy lighting often used for drama, tension, mystery, or noir-like mood.
 
@@ -39,9 +51,6 @@ def show_film_terms_glossary():
 
             **Aspect ratio**  
             The width-to-height shape of the frame, such as 16:9, 4:3, or 2.39:1.
-
-            **Visual interpretation**  
-            A film-school style reading of what the combined visual elements may communicate emotionally or narratively.
             """
         )
 
@@ -122,6 +131,80 @@ def analyze_lighting(frame):
         label = "neutral lighting"
 
     return label, mean, contrast, dark_ratio
+
+
+def infer_lighting_setup(frame, lighting_label, mean_brightness, contrast, dark_ratio):
+    gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+    h, w = gray.shape
+
+    left_mean = float(np.mean(gray[:, :w // 2]))
+    right_mean = float(np.mean(gray[:, w // 2:]))
+    top_mean = float(np.mean(gray[:h // 2, :]))
+    bottom_mean = float(np.mean(gray[h // 2:, :]))
+
+    side_difference = abs(left_mean - right_mean)
+    vertical_difference = abs(top_mean - bottom_mean)
+
+    if side_difference < 8:
+        key_direction = "fairly frontal or evenly distributed"
+    elif left_mean > right_mean:
+        key_direction = "camera-left"
+    else:
+        key_direction = "camera-right"
+
+    if vertical_difference > 12 and top_mean > bottom_mean:
+        vertical_light = "top-weighted light"
+    elif vertical_difference > 12 and bottom_mean > top_mean:
+        vertical_light = "low or under-light influence"
+    else:
+        vertical_light = "even vertical spread"
+
+    if lighting_label == "low-key dramatic lighting":
+        fill_strength = "minimal fill"
+        shadow_style = "strong shadow contrast"
+    elif lighting_label == "high-key lighting":
+        fill_strength = "strong fill / even exposure"
+        shadow_style = "soft or reduced shadows"
+    elif lighting_label == "soft lighting":
+        fill_strength = "gentle fill"
+        shadow_style = "soft shadow transitions"
+    else:
+        fill_strength = "moderate fill"
+        shadow_style = "balanced shadow structure"
+
+    if contrast > 55 and dark_ratio > 0.35:
+        backlight_guess = "possible rim/backlight separation, but not certain"
+    elif contrast < 30:
+        backlight_guess = "little obvious backlight separation"
+    else:
+        backlight_guess = "subtle or unclear backlight separation"
+
+    if mean_brightness > 150:
+        practical_guess = "possible large soft source, window, or bright practical"
+    elif dark_ratio > 0.45:
+        practical_guess = "possible motivated practical light or narrow key source"
+    else:
+        practical_guess = "no strong practical light source inferred"
+
+    setup_summary = (
+        f"The frame suggests a {lighting_label} setup. The likely key light direction is {key_direction}, "
+        f"with {fill_strength} and {shadow_style}. The vertical distribution suggests {vertical_light}. "
+        f"There is {backlight_guess}. The practical-light read is: {practical_guess}."
+    )
+
+    return {
+        "key_direction": key_direction,
+        "fill_strength": fill_strength,
+        "shadow_style": shadow_style,
+        "vertical_light": vertical_light,
+        "backlight_guess": backlight_guess,
+        "practical_guess": practical_guess,
+        "left_brightness": left_mean,
+        "right_brightness": right_mean,
+        "top_brightness": top_mean,
+        "bottom_brightness": bottom_mean,
+        "setup_summary": setup_summary
+    }
 
 
 def analyze_aspect_ratio(frame):
@@ -564,6 +647,7 @@ def interpret_visual_language(result):
     blocking = result["blocking"]
     mise = result["mise_en_scene"]
     aspect = result["aspect_ratio"]
+    lighting_setup = result["lighting_setup"]
 
     interpretation_parts = []
 
@@ -580,6 +664,8 @@ def interpret_visual_language(result):
         interpretation_parts.append("The high-key lighting creates a cleaner, brighter, and more open feeling.")
     elif lighting == "soft lighting":
         interpretation_parts.append("The soft lighting creates a gentler, more intimate visual mood.")
+
+    interpretation_parts.append(f"The inferred lighting setup suggests {lighting_setup['key_direction']} key light with {lighting_setup['fill_strength']}.")
 
     if tone == "warm":
         interpretation_parts.append("The warm color tone can suggest intimacy, memory, comfort, heat, or emotional closeness.")
@@ -625,14 +711,15 @@ def interpret_clip_visual_language(frame_results):
     dominant_blocking = Counter([r["blocking"]["blocking_type"] for r in usable]).most_common(1)[0][0]
     dominant_mise = Counter([r["mise_en_scene"]["visual_density"] for r in usable]).most_common(1)[0][0]
     dominant_format = Counter([r["aspect_ratio"]["format_type"] for r in usable]).most_common(1)[0][0]
+    dominant_key = Counter([r["lighting_setup"]["key_direction"] for r in usable]).most_common(1)[0][0]
 
     return (
         f"Across the sampled frames, the clip mainly uses {dominant_shot}, {dominant_lighting}, "
         f"and a {dominant_tone} palette. The dominant frame format is {dominant_format}, "
         f"while the composition tends toward {dominant_composition}. The blocking pattern reads as "
-        f"{dominant_blocking}, and the mise-en-scène appears {dominant_mise}. Together, these choices "
-        f"suggest a controlled visual design where framing, lighting, color, and staging work together "
-        f"to shape the scene's mood and viewer attention."
+        f"{dominant_blocking}, and the mise-en-scène appears {dominant_mise}. The inferred lighting "
+        f"often suggests a {dominant_key} key-light direction. Together, these choices suggest a controlled "
+        f"visual design where framing, lighting, color, and staging work together to shape the scene's mood and viewer attention."
     )
 
 
@@ -694,6 +781,7 @@ def analyze_single_frame(frame, classifier, yolo_model):
         shot_score = shot_results[0]["score"]
 
     lighting, mean, contrast, dark = analyze_lighting(frame)
+    lighting_setup = infer_lighting_setup(frame, lighting, mean, contrast, dark)
     aspect_ratio = analyze_aspect_ratio(frame)
     colors, percentages = extract_colors(frame, k=6)
     tone = analyze_color_tone(colors, percentages)
@@ -712,6 +800,7 @@ def analyze_single_frame(frame, classifier, yolo_model):
         "shot": shot,
         "shot_score": shot_score,
         "lighting": lighting,
+        "lighting_setup": lighting_setup,
         "mean_brightness": mean,
         "contrast": contrast,
         "dark_ratio": dark,
@@ -781,7 +870,8 @@ def generate_summary(
     dominant_composition=None,
     dominant_blocking=None,
     dominant_mise_en_scene=None,
-    dominant_format=None
+    dominant_format=None,
+    dominant_key_light=None
 ):
     palette_text = ", ".join(palette_names[:4])
 
@@ -789,11 +879,12 @@ def generate_summary(
     blocking_text = f" The blocking suggests {dominant_blocking}." if dominant_blocking else ""
     mise_text = f" The mise-en-scène appears {dominant_mise_en_scene}." if dominant_mise_en_scene else ""
     format_text = f" The frame geometry reads as {dominant_format}." if dominant_format else ""
+    lighting_text = f" The lighting setup suggests a {dominant_key_light} key direction." if dominant_key_light else ""
 
     return (
         f"This visual predominantly uses {dominant_shot}, {dominant_lighting}, "
         f"and a {dominant_tone}-toned palette built around {palette_text}. "
-        f"Overall, it feels {mood}.{format_text}{composition_text}{blocking_text}{mise_text}"
+        f"Overall, it feels {mood}.{format_text}{lighting_text}{composition_text}{blocking_text}{mise_text}"
     )
 
 
@@ -831,6 +922,7 @@ def display_frame_analysis(result):
     blocking = result["blocking"]
     mise = result["mise_en_scene"]
     aspect = result["aspect_ratio"]
+    lighting_setup = result["lighting_setup"]
 
     st.markdown("### Cinematic Breakdown")
 
@@ -851,6 +943,21 @@ def display_frame_analysis(result):
         metric_card("Blocking", blocking["blocking_type"])
         metric_card("Balance", result["symmetry_label"])
         metric_card("Visual Density", mise["visual_density"])
+
+    st.markdown("### Lighting Setup Inference")
+    col3, col4 = st.columns(2)
+
+    with col3:
+        metric_card("Likely Key Direction", lighting_setup["key_direction"])
+        metric_card("Fill Strength", lighting_setup["fill_strength"])
+        metric_card("Shadow Style", lighting_setup["shadow_style"])
+
+    with col4:
+        metric_card("Vertical Light", lighting_setup["vertical_light"])
+        metric_card("Backlight / Rim", lighting_setup["backlight_guess"])
+        metric_card("Practical Source Guess", lighting_setup["practical_guess"])
+
+    st.info(lighting_setup["setup_summary"])
 
     st.markdown("### Visual Interpretation")
     st.info(result["visual_interpretation"])
@@ -896,6 +1003,7 @@ def display_technical_details(result, frame_number=None):
     blocking = result["blocking"]
     mise = result["mise_en_scene"]
     aspect = result["aspect_ratio"]
+    lighting_setup = result["lighting_setup"]
 
     st.write(f"**Frame quality:** {result['quality_status']}")
     st.write(f"**Frame size:** {aspect['width']} x {aspect['height']}")
@@ -906,6 +1014,10 @@ def display_technical_details(result, frame_number=None):
     st.write(f"**Mean brightness:** {result['mean_brightness']:.1f}")
     st.write(f"**Contrast:** {result['contrast']:.1f}")
     st.write(f"**Dark pixel ratio:** {result['dark_ratio']:.2f}")
+    st.write(f"**Left brightness:** {lighting_setup['left_brightness']:.1f}")
+    st.write(f"**Right brightness:** {lighting_setup['right_brightness']:.1f}")
+    st.write(f"**Top brightness:** {lighting_setup['top_brightness']:.1f}")
+    st.write(f"**Bottom brightness:** {lighting_setup['bottom_brightness']:.1f}")
     st.write(f"**Subject area ratio:** {composition['subject_area_ratio']:.3f}")
     st.write(f"**Symmetry score:** {result['symmetry_score']:.1f}")
     st.write(f"**Blocking relationship:** {blocking['relationship']}")
@@ -959,6 +1071,7 @@ if mode == "Analyze Video Clip":
             dominant_blocking = Counter([r["blocking"]["blocking_type"] for r in summary_source]).most_common(1)[0][0]
             dominant_mise = Counter([r["mise_en_scene"]["visual_density"] for r in summary_source]).most_common(1)[0][0]
             dominant_format = Counter([r["aspect_ratio"]["format_type"] for r in summary_source]).most_common(1)[0][0]
+            dominant_key_light = Counter([r["lighting_setup"]["key_direction"] for r in summary_source]).most_common(1)[0][0]
 
             clip_colors, clip_proportions = aggregate_clip_palette(frame_results)
             palette_names = simplify_hex_names(clip_colors)
@@ -974,7 +1087,8 @@ if mode == "Analyze Video Clip":
                 dominant_composition,
                 dominant_blocking,
                 dominant_mise,
-                dominant_format
+                dominant_format,
+                dominant_key_light
             )
 
             col1, col2 = st.columns([1.2, 1])
@@ -982,6 +1096,7 @@ if mode == "Analyze Video Clip":
             with col1:
                 st.write(f"**Dominant shot type:** {dominant_shot}")
                 st.write(f"**Dominant lighting:** {dominant_lighting}")
+                st.write(f"**Dominant key direction:** {dominant_key_light}")
                 st.write(f"**Dominant color tone:** {dominant_tone}")
                 st.write(f"**Dominant frame format:** {dominant_format}")
                 st.write(f"**Dominant composition:** {dominant_composition}")
@@ -1042,7 +1157,8 @@ if mode == "Analyze Single Still / Photo":
             result["composition"]["composition_type"],
             result["blocking"]["blocking_type"],
             result["mise_en_scene"]["visual_density"],
-            result["aspect_ratio"]["format_type"]
+            result["aspect_ratio"]["format_type"],
+            result["lighting_setup"]["key_direction"]
         )
 
         analysis_tab, technical_tab = st.tabs(["Cinematic Analysis", "Technical Details"])
