@@ -10,6 +10,7 @@ from PIL import Image
 from sklearn.cluster import KMeans
 from transformers import pipeline
 from ultralytics import YOLO
+import requests 
 
 
 st.title("🎬 Cinematic Scene Understanding AI - Phase 12")
@@ -54,47 +55,76 @@ def show_film_terms_glossary():
             """
         )
 
+def fetch_movie_metadata(title):
+    api_key = st.secrets.get("OMDB_API_KEY", "")
+
+    if not api_key:
+        return None, "OMDb API key not found. Add it to .streamlit/secrets.toml"
+
+    url = "https://www.omdbapi.com/"
+    params = {
+        "t": title,
+        "apikey": api_key,
+        "plot": "full"
+    }
+
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        data = response.json()
+
+        if data.get("Response") == "False":
+            return None, data.get("Error", "Movie not found.")
+
+        return data, None
+
+    except Exception as e:
+        return None, f"API request failed: {str(e)}"
+
+
 def show_film_knowledge_panel():
-    with st.expander("Film Knowledge / Research Assistant"):
-        film_name = st.text_input("Enter a film name for research context")
+    with st.expander("Film Knowledge / Metadata Search"):
+        film_name = st.text_input("Enter a film name")
 
         if film_name:
-            st.markdown("### What to Research")
+            movie_data, error = fetch_movie_metadata(film_name)
 
-            st.write("Use these search prompts to gather useful film-school context:")
+            if error:
+                st.warning(error)
+                return
 
+            poster = movie_data.get("Poster", "N/A")
+
+            col1, col2 = st.columns([1, 2])
+
+            with col1:
+                if poster != "N/A":
+                    st.image(poster, use_container_width=True)
+
+            with col2:
+                st.markdown(f"### {movie_data.get('Title', 'Unknown Title')}")
+                st.write(f"**Year:** {movie_data.get('Year', 'N/A')}")
+                st.write(f"**Director:** {movie_data.get('Director', 'N/A')}")
+                st.write(f"**Genre:** {movie_data.get('Genre', 'N/A')}")
+                st.write(f"**Runtime:** {movie_data.get('Runtime', 'N/A')}")
+                st.write(f"**IMDb Rating:** {movie_data.get('imdbRating', 'N/A')}")
+                st.write(f"**Actors:** {movie_data.get('Actors', 'N/A')}")
+
+            st.markdown("### Plot")
+            st.info(movie_data.get("Plot", "No plot available."))
+
+            st.markdown("### Research Prompts")
             st.code(f"{film_name} cinematography analysis")
-            st.code(f"{film_name} making of cinematography")
             st.code(f"{film_name} director visual style")
-            st.code(f"{film_name} director of photography interview")
+            st.code(f"{film_name} cinematographer interview")
             st.code(f"{film_name} lighting breakdown")
-            st.code(f"{film_name} color palette analysis")
             st.code(f"{film_name} production design analysis")
 
-            st.markdown("### Notes to Collect")
-
-            st.write(
-                """
-                - Director and cinematographer  
-                - Camera / lens choices if available  
-                - Lighting approach  
-                - Color palette  
-                - Production design / mise-en-scène  
-                - Important visual motifs  
-                - Behind-the-scenes trivia  
-                - Any interviews from the director or DP  
-                """
-            )
-
-            st.markdown("### How to Connect It to This App")
-
+            st.markdown("### How to Use This With Your Visual Analysis")
             st.info(
-                f"After analyzing a still or clip from {film_name}, compare the app's output "
-                "with real production context. For example, check whether the detected lighting, "
-                "color tone, blocking, aspect ratio, and mise-en-scène match known choices made "
-                "by the director or cinematographer."
+                "Compare this film metadata with the app's visual output. Look at whether the detected "
+                "lighting, color tone, aspect ratio, blocking, and mise-en-scène match the known director, "
+                "genre, and visual style of the film."
             )
-
 
 show_film_terms_glossary()
 show_film_knowledge_panel()

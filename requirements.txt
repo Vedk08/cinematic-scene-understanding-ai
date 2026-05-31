@@ -5,3 +5,4 @@ pillow
 transformers
 torch
 scikit-learn
+requests
