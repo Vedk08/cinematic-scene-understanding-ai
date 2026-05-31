@@ -166,11 +166,22 @@ Example output:
 
 This phase moves the project closer to a cinema-school AI by connecting objects, setting, lighting, color, and subject placement into a broader visual interpretation.
 
-## 🚧 Next Phase
+### Phase 9 — Aspect Ratio & Frame Geometry
 
-### Phase 9 — Aspect Ratio and Frame Geometry
+* Added aspect ratio detection for both video frames and still images
+* Calculated frame width, height, and width-to-height ratio
+* Mapped frames to common cinematic/social formats:
 
-The next step is to analyze frame shape and cinematic format, including 16:9, 4:3, 1.85:1, 2.39:1, square, and vertical formats.
+  * 4:3 classic academy ratio
+  * 16:9 standard widescreen
+  * 1.85:1 theatrical widescreen
+  * 2.39:1 anamorphic widescreen
+  * square format
+  * vertical/social format
+* Added cinematic interpretation of how frame shape affects the visual feeling
+
+This phase helps the system understand not only what is inside the frame, but also the shape of the frame itself.
+
 
 ## 🛠️ Tech Stack
 
