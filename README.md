@@ -9,6 +9,8 @@ Everything runs **locally**: open models via [Ollama](https://ollama.com), a
 local [Chroma](https://www.trychroma.com/) vector store, no external APIs and no
 keys.
 
+![Scene analysis with 5-frame sampling, scene profile, and color palette](screenshots/analysis.png)
+
 > This branch (`rag-clean`) extends the original computer-vision portfolio
 > project with a Retrieval-Augmented Generation (RAG) reasoning layer. The CV
 > pipeline is the foundation; the RAG agent is the evolution.
@@ -72,6 +74,16 @@ deliberately broad to give the LLM rich context, so precision is traded for
 recall and grounding by design.
 
 ---
+
+## What it looks like
+
+**Grounded, cited interpretation**
+
+![Grounded interpretation with film-theory citations](screenshots/interpretation.png)
+
+**Ask the scene anything**
+
+![Follow-up chat answering a cinematography question](screenshots/chat.png)
 
 ## Tech stack
 
@@ -145,8 +157,7 @@ this project. It is designed to be extended with openly-licensed sources
 (e.g. CC BY-SA material such as Wikipedia and the Wikibooks Movie Making
 Manual); each note carries `source` and `license` metadata.
 
+
 ## Demo
 
-<!-- Add a link to your demo video (e.g. unlisted YouTube) and screenshots here -->
-_Demo video: (link)_  
-_Screenshots: see `screenshots/`_
+📺 **[Watch the demo video](https://youtu.be/boOyMCoVOVs)**
