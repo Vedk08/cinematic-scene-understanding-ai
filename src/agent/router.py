@@ -14,11 +14,15 @@ from src.vision.schema import ClipFeatures
 
 def select_queries(features: ClipFeatures) -> list[tuple[str | None, str]]:
     """Return (domain, query) pairs to retrieve. domain=None means search all domains."""
-    queries: list[tuple[str | None, str]] = [
+    tone = features.dominant_tone.lower()
+    return [
         (
             "lighting_color",
-            f"{features.dominant_lighting}, {features.dominant_tone} color tone, "
-            f"key light from {features.dominant_key_light}",
+            f"{features.dominant_lighting}, key light from {features.dominant_key_light}",
+        ),
+        (
+            "lighting_color",
+            f"{tone} color tone, {features.palette_summary()}, color meaning and mood",
         ),
         (
             "shot_composition",
@@ -28,16 +32,9 @@ def select_queries(features: ClipFeatures) -> list[tuple[str | None, str]]:
             "blocking_mise_en_scene",
             f"{features.dominant_blocking}, {features.dominant_mise_en_scene}",
         ),
+        (
+            "genre_director",
+            f"{features.dominant_lighting}, {tone} tone, {features.dominant_composition}, "
+            f"{features.dominant_format} genre conventions",
+        ),
     ]
-
-    lighting = features.dominant_lighting.lower()
-    tone = features.dominant_tone.lower()
-    if "low-key" in lighting or "high-key" in lighting or tone in ("warm", "cool"):
-        queries.append(
-            (
-                "genre_director",
-                f"{features.dominant_lighting}, {features.dominant_tone} tone genre conventions",
-            )
-        )
-
-    return queries
