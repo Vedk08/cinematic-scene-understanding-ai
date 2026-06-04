@@ -1,165 +1,152 @@
-# 🎬 Cinematic Scene Understanding AI
+# Cinematic Scene Understanding — RAG Edition
 
-An AI-powered film analysis tool that helps users understand the visual language of cinema.
+An AI-powered cinematography analyst. Upload a film still or short clip and the
+system **measures** the image with a computer-vision pipeline, then **explains**
+it in grounded film-theory language — citing the sources it reasons from, and
+answering follow-up questions about the scene.
 
-The app analyzes video clips and still images through a film-school lens, identifying shot type, lighting, color palette, aspect ratio, composition, blocking, mise-en-scène, visual mood, and film context.
+Everything runs **locally**: open models via [Ollama](https://ollama.com), a
+local [Chroma](https://www.trychroma.com/) vector store, no external APIs and no
+keys.
 
----
-
-## What It Does
-
-Users can:
-
-- Upload a video clip
-- Extract representative frames
-- Upload a still image or movie frame
-- Search film knowledge using OMDb
-- Analyze visual language
-- Download a cinematic report
+> This branch (`rag-clean`) extends the original computer-vision portfolio
+> project with a Retrieval-Augmented Generation (RAG) reasoning layer. The CV
+> pipeline is the foundation; the RAG agent is the evolution.
 
 ---
 
-## Core Features
+## What it does
 
-### Video Clip Analysis
-- Extracts representative frames from uploaded videos using OpenCV
-- Analyzes each frame individually
-- Produces a clip-level cinematic summary
+- **Samples** a clip into 5 frames (lighting and framing shift within a scene).
+- **Measures** each frame: shot type (CLIP), subjects/props (YOLOv8), lighting
+  and key-light direction, color palette (K-Means) grouped into families,
+  composition, blocking, and mise-en-scène.
+- **Retrieves** the most relevant cinematography knowledge for what it measured.
+- **Generates** a grounded, cited interpretation with a local LLM — and answers
+  free-form follow-up questions about the scene.
 
-### Still Image Analysis
-- Supports movie stills, screenshots, and photographs
-- Runs the same visual analysis pipeline on a single image
-
-### Shot Type Classification
-Uses CLIP zero-shot image classification to identify:
-
-- Close-up shot
-- Medium shot
-- Wide shot
-
-### Lighting Analysis
-Uses image statistics to classify:
-
-- Low-key dramatic lighting
-- High-key lighting
-- Soft lighting
-- Neutral lighting
-
-### Lighting Setup Inference
-Infers possible lighting qualities such as:
-
-- Key light direction
-- Fill strength
-- Shadow style
-- Practical light source possibility
-
-### Color Palette Analysis
-Uses KMeans clustering to extract:
-
-- Dominant color palette
-- Warm / cool / neutral tone
-- Palette visualization
-
-### Aspect Ratio Analysis
-Detects frame geometry and common formats:
-
-- 4:3
-- 16:9
-- 1.85:1
-- 2.39:1
-- Square
-- Vertical/social format
-
-### Composition Analysis
-Analyzes:
-
-- Rule of thirds
-- Centered composition
-- Subject placement
-- Framing
-- Negative space
-
-### Object and Subject Detection
-Uses YOLOv8 to detect people and objects, supporting:
-
-- Subject placement
-- Blocking analysis
-- Mise-en-scène analysis
-
-### Blocking Analysis
-Interprets how subjects are staged:
-
-- Single-subject blocking
-- Two-person staging
-- Character spacing
-- Visual dominance
-- Foreground/background relationship
-
-### Mise-en-scène Analysis
-Analyzes:
-
-- Setting type
-- Visual density
-- Props / visible objects
-- Subject-environment relationship
-
-### Film Knowledge
-Uses OMDb API to retrieve:
-
-- Poster
-- Year
-- Director
-- Genre
-- Runtime
-- IMDb rating
-- Cast
-- Plot context
-
-### Downloadable Report
-Generates a clean text report containing:
-
-- Film context
-- Scene summary
-- Visual interpretation
-- AI-assisted analysis note
-
----
-
-## Tech Stack
-
-- Python
-- Streamlit
-- OpenCV
-- NumPy
-- Pillow
-- Scikit-learn
-- Hugging Face Transformers
-- CLIP
-- YOLOv8
-- OMDb API
-- Requests
+The key design decision: the original project turned measurements into
+interpretation with hand-written templates. Here, that template layer is
+**replaced** by an LLM grounded in a curated knowledge base — so the analysis
+reasons from real film theory and cites it, instead of reciting canned phrases.
 
 ---
 
 ## Architecture
 
-```text
-Video / Image Input
-        ↓
-Frame Extraction or Image Loading
-        ↓
-CLIP Shot Classification
-        ↓
-OpenCV Lighting + Frame Geometry Analysis
-        ↓
-KMeans Color Palette Extraction
-        ↓
-YOLO Subject / Object Detection
-        ↓
-Composition + Blocking + Mise-en-scène Logic
-        ↓
-Visual Interpretation Layer
-        ↓
-Film Knowledge Context
-        ↓
-Downloadable Cinematic Report
+```mermaid
+flowchart TD
+    A[Upload image or clip] --> B[Sample 5 frames]
+    B --> C[CV pipeline:<br/>CLIP shot · YOLOv8 detection · lighting<br/>K-Means palette · composition · blocking]
+    C --> D[Structured ClipFeatures]
+    D --> E[Feature-driven router]
+    E --> F[Chroma vector retrieval<br/>over film-theory corpus]
+    D --> G[Local LLM via Ollama]
+    F --> G
+    G --> H[Grounded, cited interpretation]
+    H --> I[Follow-up chat]
+```
+
+Retrieval is **feature-driven and deterministic** rather than tool-calling:
+the measured features decide which knowledge domains to query. This is more
+reliable than asking a small local model to choose tools, and it guarantees the
+model always sees the relevant theory.
+
+---
+
+## Results
+
+Measured on a labelled evaluation set of six scene types (noir, romance,
+western, horror, sci-fi, depth/blocking) via `python -m eval.run --full`:
+
+| Metric | Result |
+| --- | --- |
+| Citation grounding rate | **100%** (no hallucinated sources) |
+| Retrieval recall | **68%** |
+| Median retrieval latency | **~140 ms** |
+| End-to-end latency | **~12 s** (local 3B model, on-device) |
+
+Grounding and recall are the metrics that matter for a RAG system: *does it
+surface the right knowledge, and does it avoid inventing sources?* Retrieval is
+deliberately broad to give the LLM rich context, so precision is traded for
+recall and grounding by design.
+
+---
+
+## Tech stack
+
+**RAG / LLM:** Ollama (Llama 3.2), `nomic-embed-text` embeddings, ChromaDB
+vector store, retrieval-augmented generation, LangChain.
+**Computer vision:** CLIP (zero-shot shot classification), YOLOv8, OpenCV,
+scikit-learn (K-Means).
+**App / tooling:** Streamlit, Python, typed dataclass schemas, a labelled
+evaluation harness.
+
+---
+
+## Setup
+
+Requires Python 3.10+ and [Ollama](https://ollama.com) installed and running.
+
+```bash
+# 1. Install dependencies
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+# 2. Pull the local models
+ollama pull llama3.2:3b
+ollama pull nomic-embed-text
+
+# 3. Build the knowledge index
+python -m scripts.build_index
+
+# 4. Run the app
+streamlit run app.py
+```
+
+---
+
+## Usage
+
+- **Analyze:** upload an image or clip and click *Analyze scene*. You get a
+  Scene profile (shot, lighting, color families, composition, blocking) and a
+  grounded interpretation with its sources.
+- **Ask:** use the chat box to ask anything about the scene — the agent answers
+  grounded in the knowledge base and remembers the scene across turns.
+
+Evaluate retrieval quality and latency:
+
+```bash
+python -m eval.run          # retrieval metrics
+python -m eval.run --full   # + end-to-end latency and grounding rate
+```
+
+---
+
+## Project structure
+
+```
+app.py                 Streamlit app (analysis + chat)
+knowledge/             Cinematography knowledge corpus (markdown + metadata)
+src/vision/            CV pipeline → typed ClipFeatures
+src/knowledge/         Load → chunk → embed → store → retrieve (RAG layer)
+src/agent/             Router → retrieval → grounded LLM analyst
+scripts/               build_index, query_demo, agent_demo
+eval/                  Labelled evaluation harness
+```
+
+---
+
+## Knowledge base & licensing
+
+The knowledge corpus is original explanatory notes on cinematography
+(lighting, color, composition, blocking, and genre conventions), written for
+this project. It is designed to be extended with openly-licensed sources
+(e.g. CC BY-SA material such as Wikipedia and the Wikibooks Movie Making
+Manual); each note carries `source` and `license` metadata.
+
+## Demo
+
+<!-- Add a link to your demo video (e.g. unlisted YouTube) and screenshots here -->
+_Demo video: (link)_  
+_Screenshots: see `screenshots/`_
