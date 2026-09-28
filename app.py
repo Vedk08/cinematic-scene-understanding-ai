@@ -1,1284 +1,274 @@
+"""
+Cinematic Scene Understanding — RAG edition (rag-version branch).
+
+Measures a scene with the src/vision pipeline, then grounds its interpretation
+in a cinematography knowledge base via src/agent. Two modes: an automatic
+one-shot grounded report, and a follow-up chat box.
+
+Run:  streamlit run app.py
+Prereqs: Ollama running; models pulled (llama3.2:3b, nomic-embed-text);
+         index built (python -m scripts.build_index)
+"""
+
+from __future__ import annotations
+
 import os
-import re
 import tempfile
-from collections import Counter
-from datetime import datetime
 
-import cv2
 import numpy as np
-import requests
 import streamlit as st
-import streamlit.components.v1 as components
 from PIL import Image
-from sklearn.cluster import KMeans
-from transformers import pipeline
-from ultralytics import YOLO
 
+from src.agent import analyze
+from src.agent.llm import CHAT_MODEL
+from src.vision import aggregate, analyze_frame, extract_frames
+from src.vision.models import load_shot_classifier, load_yolo
 
-st.set_page_config(
-    page_title="Cinematic Scene Understanding AI",
-    page_icon="🎬",
-    layout="wide"
-)
+st.set_page_config(page_title="Cinematic Scene Understanding — RAG", layout="wide")
 
-st.title("🎬 Cinematic Scene Understanding AI")
-st.write(
-    "Upload a video clip or still image and receive a film-school style visual analysis of shot type, "
-    "lighting, color, aspect ratio, composition, blocking, mise-en-scène, and cinematic mood."
-)
+VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".m4v")
 
-st.info(
-    "This tool gives AI-assisted visual interpretations. Treat the output as a study aid, not an absolute production truth."
-)
 
-
-def safe_filename(text):
-    text = text.lower().strip()
-    text = re.sub(r"[^a-z0-9]+", "_", text)
-    return text.strip("_") or "cinematic_analysis"
-
-
-def show_film_terms_glossary():
-    with st.expander("Film Terms Glossary"):
-        st.markdown(
-            """
-            **Mise-en-scène**  
-            Everything arranged inside the frame: setting, props, lighting, actors, blocking, costume, color, and visual design.
-
-            **Blocking**  
-            How actors or subjects are positioned and arranged inside the scene.
-
-            **Key light**  
-            The main light source shaping the subject.
-
-            **Fill light**  
-            A softer light used to reduce shadows created by the key light.
-
-            **Backlight / Rim light**  
-            Light coming from behind or the side-back of the subject, often separating them from the background.
-
-            **Practical light**  
-            A visible light source inside the scene, such as a lamp, candle, window, TV, or neon sign.
-
-            **Low-key lighting**  
-            Dark, shadow-heavy lighting often used for drama, tension, mystery, or noir-like mood.
-
-            **High-key lighting**  
-            Bright, even lighting with fewer shadows, often used for clean, open, or lighter moods.
-
-            **Rule of thirds**  
-            A composition principle where the frame is divided into thirds and important subjects are placed near those lines.
-
-            **Aspect ratio**  
-            The width-to-height shape of the frame, such as 16:9, 4:3, or 2.39:1.
-            """
-        )
-
-
-def fetch_movie_metadata(title):
-    api_key = st.secrets.get("OMDB_API_KEY", "")
-
-    if not api_key:
-        return None, "OMDb API key not found. Add it to .streamlit/secrets.toml"
-
-    try:
-        response = requests.get(
-            "https://www.omdbapi.com/",
-            params={"t": title, "apikey": api_key, "plot": "full"},
-            timeout=10
-        )
-        data = response.json()
-
-        if data.get("Response") == "False":
-            return None, data.get("Error", "Film not found.")
-
-        return data, None
-
-    except Exception as e:
-        return None, f"Film knowledge request failed: {str(e)}"
-
-
-def show_film_knowledge_panel():
-    with st.expander("Film Knowledge"):
-        film_name = st.text_input("Enter a film title for context")
-
-        if film_name:
-            movie_data, error = fetch_movie_metadata(film_name)
-
-            if error:
-                st.warning(error)
-                return None
-
-            poster = movie_data.get("Poster", "N/A")
-
-            col1, col2 = st.columns([1, 2])
-
-            with col1:
-                if poster != "N/A":
-                    st.image(poster, use_container_width=True)
-
-            with col2:
-                st.markdown(f"### {movie_data.get('Title', 'Unknown Title')}")
-                st.write(f"**Year:** {movie_data.get('Year', 'N/A')}")
-                st.write(f"**Director:** {movie_data.get('Director', 'N/A')}")
-                st.write(f"**Genre:** {movie_data.get('Genre', 'N/A')}")
-                st.write(f"**Runtime:** {movie_data.get('Runtime', 'N/A')}")
-                st.write(f"**IMDb Rating:** {movie_data.get('imdbRating', 'N/A')}")
-                st.write(f"**Actors:** {movie_data.get('Actors', 'N/A')}")
-
-            st.markdown("### Story Context")
-            st.info(movie_data.get("Plot", "No plot available."))
-
-            st.markdown("### How to Use This")
-            st.info(
-                "Compare the film information with the visual analysis below. Notice whether the lighting, color, "
-                "blocking, aspect ratio, and mise-en-scène support the film's genre, tone, and story world."
-            )
-
-            return movie_data
-
-    return None
-
-
-show_film_terms_glossary()
-movie_data = show_film_knowledge_panel()
-
-
-@st.cache_resource
-def load_classifier():
-    return pipeline(
-        "zero-shot-image-classification",
-        model="openai/clip-vit-base-patch32"
-    )
-
-
-@st.cache_resource
-def load_yolo_model():
-    return YOLO("yolov8n.pt")
-
-
-def extract_frames(video_path, num_frames=5):
-    frames = []
-    cap = cv2.VideoCapture(video_path)
-
-    if not cap.isOpened():
-        return frames
-
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-    if total_frames <= 0:
-        cap.release()
-        return frames
-
-    frame_indices = [
-        int(i * (total_frames - 1) / (num_frames - 1))
-        for i in range(num_frames)
-    ]
-
-    for idx in frame_indices:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-        success, frame = cap.read()
-
-        if success:
-            frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-
-    cap.release()
-    return frames
-
-
-def classify_shot(image, classifier):
-    labels = ["close-up shot", "medium shot", "wide shot"]
-    return classifier(
-        image,
-        candidate_labels=labels,
-        hypothesis_template="This image shows a {}"
-    )
-
-
-def get_frame_quality(frame):
-    gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-    mean = float(np.mean(gray))
-    contrast = float(np.std(gray))
-
-    if mean < 10 and contrast < 5:
-        return "unusable_black_frame", mean, contrast
-
-    if mean < 25 and contrast < 10:
-        return "too_dark_to_analyze_reliably", mean, contrast
-
-    return "usable", mean, contrast
-
-
-def analyze_lighting(frame):
-    gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-
-    mean = float(np.mean(gray))
-    contrast = float(np.std(gray))
-    dark_ratio = float(np.sum(gray < 50) / gray.size)
-
-    if mean < 10 and contrast < 5:
-        label = "unusable black frame"
-    elif dark_ratio > 0.5:
-        label = "low-key dramatic lighting"
-    elif mean > 170:
-        label = "high-key lighting"
-    elif contrast < 35:
-        label = "soft lighting"
-    else:
-        label = "neutral lighting"
-
-    return label, mean, contrast, dark_ratio
-
-
-def infer_lighting_setup(frame, lighting_label, mean_brightness, contrast, dark_ratio):
-    gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-    h, w = gray.shape
-
-    left_mean = float(np.mean(gray[:, :w // 2]))
-    right_mean = float(np.mean(gray[:, w // 2:]))
-    top_mean = float(np.mean(gray[:h // 2, :]))
-    bottom_mean = float(np.mean(gray[h // 2:, :]))
-
-    side_difference = abs(left_mean - right_mean)
-    vertical_difference = abs(top_mean - bottom_mean)
-
-    if side_difference < 8:
-        key_direction = "fairly frontal or evenly distributed"
-    elif left_mean > right_mean:
-        key_direction = "camera-left"
-    else:
-        key_direction = "camera-right"
-
-    if vertical_difference > 12 and top_mean > bottom_mean:
-        vertical_light = "top-weighted light"
-    elif vertical_difference > 12 and bottom_mean > top_mean:
-        vertical_light = "low or under-light influence"
-    else:
-        vertical_light = "even vertical spread"
-
-    if lighting_label == "low-key dramatic lighting":
-        fill_strength = "minimal fill"
-        shadow_style = "strong shadow contrast"
-    elif lighting_label == "high-key lighting":
-        fill_strength = "strong fill / even exposure"
-        shadow_style = "soft or reduced shadows"
-    elif lighting_label == "soft lighting":
-        fill_strength = "gentle fill"
-        shadow_style = "soft shadow transitions"
-    else:
-        fill_strength = "moderate fill"
-        shadow_style = "balanced shadow structure"
-
-    if contrast > 55 and dark_ratio > 0.35:
-        backlight_guess = "possible rim/backlight separation"
-    elif contrast < 30:
-        backlight_guess = "little obvious backlight separation"
-    else:
-        backlight_guess = "subtle or unclear backlight separation"
-
-    if mean_brightness > 150:
-        practical_guess = "possible large soft source, window, or bright practical"
-    elif dark_ratio > 0.45:
-        practical_guess = "possible motivated practical light or narrow key source"
-    else:
-        practical_guess = "no strong practical light source inferred"
-
-    setup_summary = (
-        f"The frame suggests a {lighting_label} setup. The likely key light direction is {key_direction}, "
-        f"with {fill_strength} and {shadow_style}. The vertical distribution suggests {vertical_light}. "
-        f"There is {backlight_guess}. The practical-light read is: {practical_guess}."
-    )
-
-    return {
-        "key_direction": key_direction,
-        "fill_strength": fill_strength,
-        "shadow_style": shadow_style,
-        "vertical_light": vertical_light,
-        "backlight_guess": backlight_guess,
-        "practical_guess": practical_guess,
-        "setup_summary": setup_summary
-    }
-
-
-def analyze_aspect_ratio(frame):
-    h, w, _ = frame.shape
-    ratio = w / h
-
-    common_ratios = {
-        "1.33:1 / 4:3 classic academy ratio": 1.33,
-        "1.66:1 European widescreen": 1.66,
-        "1.78:1 / 16:9 standard widescreen": 1.78,
-        "1.85:1 theatrical widescreen": 1.85,
-        "2.35:1 / 2.39:1 cinematic anamorphic widescreen": 2.39,
-        "9:16 vertical / social media format": 0.56,
-        "1:1 square format": 1.00,
-    }
-
-    closest_label = min(
-        common_ratios,
-        key=lambda label: abs(common_ratios[label] - ratio)
-    )
-
-    if ratio > 2.1:
-        format_type = "cinematic ultra-wide frame"
-        interpretation = "The wide frame emphasizes horizontal space, environment, and spatial relationships."
-    elif ratio > 1.7:
-        format_type = "standard widescreen frame"
-        interpretation = "The frame balances subject presence with the surrounding environment."
-    elif 1.2 <= ratio <= 1.5:
-        format_type = "classic / boxier frame"
-        interpretation = "The boxier frame can feel intimate, formal, or character-focused."
-    elif 0.8 <= ratio <= 1.1:
-        format_type = "square-like frame"
-        interpretation = "The square frame creates a balanced, contained visual field."
-    elif ratio < 0.8:
-        format_type = "vertical frame"
-        interpretation = "The vertical frame emphasizes height, bodies, and portrait-style composition."
-    else:
-        format_type = "unusual frame shape"
-        interpretation = "The frame shape is less conventional and may create a distinct visual rhythm."
-
-    return {
-        "width": w,
-        "height": h,
-        "aspect_ratio": ratio,
-        "closest_format": closest_label,
-        "format_type": format_type,
-        "interpretation": interpretation,
-    }
-
-
-def extract_colors(frame, k=6):
-    small = cv2.resize(frame, (100, 100), interpolation=cv2.INTER_AREA)
-    pixels = small.reshape((-1, 3))
-
-    kmeans = KMeans(n_clusters=k, n_init=10, random_state=42)
-    kmeans.fit(pixels)
-
-    colors = kmeans.cluster_centers_.astype(int)
-    labels = kmeans.labels_
-
-    counts = np.bincount(labels)
-    percentages = counts / counts.sum()
-
-    idx = np.argsort(percentages)[::-1]
-    return colors[idx], percentages[idx]
-
-
-def rgb_to_hex(c):
-    return "#%02x%02x%02x" % tuple(c)
-
-
-def analyze_color_tone(colors, percentages):
-    r = g = b = 0.0
-
-    for (cr, cg, cb), p in zip(colors, percentages):
-        r += cr * p
-        g += cg * p
-        b += cb * p
-
-    if r > b + 20:
-        return "warm"
-    elif b > r + 20:
-        return "cool"
-
-    return "neutral"
-
-
-def show_palette(colors, percentages, height=65):
-    html = f"""
-    <div style="
-        display:flex;
-        width:100%;
-        height:{height}px;
-        border:3px solid white;
-        margin:10px 0 10px 0;
-        box-sizing:border-box;
-        overflow:hidden;
-    ">
+st.markdown(
     """
-
-    for i, (color, p) in enumerate(zip(colors, percentages)):
-        hex_color = rgb_to_hex(color)
-        border = "border-right:3px solid white;" if i < len(colors) - 1 else ""
-        width_percent = max(p * 100, 8)
-
-        html += f"""
-        <div style="
-            background:{hex_color};
-            width:{width_percent}%;
-            height:{height}px;
-            {border}
-            box-sizing:border-box;
-        "></div>
-        """
-
-    html += "</div>"
-    components.html(html, height=height + 20)
-
-
-def simplify_hex_names(colors):
-    names = []
-
-    for r, g, b in colors:
-        if r < 35 and g < 35 and b < 35:
-            names.append("deep black")
-        elif b > r + 30 and b > g:
-            names.append("blue" if g < 100 else "teal-blue")
-        elif r > b + 30 and r > g:
-            names.append("amber" if g > 120 else "red-orange")
-        elif g > r and g > b:
-            names.append("green")
-        elif abs(r - b) < 20 and r > 100 and b > 100:
-            names.append("magenta-violet")
-        elif r > 140 and g > 140 and b > 140:
-            names.append("light gray")
-        else:
-            names.append("muted neutral")
-
-    return names
-
-
-def detect_objects_yolo(frame, yolo_model, confidence_threshold=0.25):
-    results = yolo_model.predict(frame, conf=confidence_threshold, verbose=False)
-    detections = []
-
-    if len(results) == 0:
-        return detections
-
-    result = results[0]
-    names = result.names
-
-    for box in result.boxes:
-        class_id = int(box.cls[0])
-        confidence = float(box.conf[0])
-        x1, y1, x2, y2 = box.xyxy[0].tolist()
-
-        detections.append({
-            "label": names[class_id],
-            "confidence": confidence,
-            "box": (
-                int(x1),
-                int(y1),
-                int(x2 - x1),
-                int(y2 - y1)
-            )
-        })
-
-    return detections
-
-
-def get_person_detections(detections):
-    return [detection for detection in detections if detection["label"] == "person"]
-
-
-def get_primary_subject_box(person_detections):
-    if not person_detections:
-        return None
-
-    return max(
-        person_detections,
-        key=lambda detection: detection["box"][2] * detection["box"][3]
-    )
-
-
-def analyze_symmetry(frame, quality_status):
-    if quality_status != "usable":
-        return "too dark / invalid for symmetry analysis", 0.0
-
-    gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-    h, w = gray.shape
-
-    left = gray[:, :w // 2]
-    right = gray[:, w - w // 2:]
-    right_flipped = cv2.flip(right, 1)
-
-    min_width = min(left.shape[1], right_flipped.shape[1])
-    left = left[:, :min_width]
-    right_flipped = right_flipped[:, :min_width]
-
-    difference = np.mean(
-        np.abs(left.astype("float") - right_flipped.astype("float"))
-    )
-    symmetry_score = max(0, 100 - difference)
-
-    if symmetry_score > 75:
-        label = "strong symmetrical composition"
-    elif symmetry_score > 55:
-        label = "moderately balanced composition"
-    else:
-        label = "asymmetrical composition"
-
-    return label, float(symmetry_score)
-
-
-def analyze_blocking(frame, detections, quality_status):
-    h, w, _ = frame.shape
-    frame_diagonal = np.sqrt(w ** 2 + h ** 2)
-
-    if quality_status != "usable":
-        return {
-            "blocking_type": "blocking unavailable due to poor frame quality",
-            "relationship": "unavailable",
-            "dominance": "unavailable",
-            "depth": "unavailable",
-            "blocking_summary": "Blocking analysis is unavailable because the frame quality is too poor.",
-        }
-
-    people = get_person_detections(detections)
-
-    if len(people) == 0:
-        return {
-            "blocking_type": "no human blocking detected",
-            "relationship": "no people detected",
-            "dominance": "unavailable",
-            "depth": "environment-focused frame",
-            "blocking_summary": "No clear human subjects were detected, so the frame reads more as an environment or object-focused composition.",
-        }
-
-    if len(people) == 1:
-        x, y, bw, bh = people[0]["box"]
-        area_ratio = (bw * bh) / (w * h)
-
-        if area_ratio > 0.30:
-            dominance = "single dominant subject"
-            depth = "foreground-heavy subject presence"
-        elif area_ratio > 0.12:
-            dominance = "clear primary subject"
-            depth = "moderate subject presence"
-        else:
-            dominance = "small subject within environment"
-            depth = "environment-dominant staging"
-
-        return {
-            "blocking_type": "single-subject blocking",
-            "relationship": "one person staged alone",
-            "dominance": dominance,
-            "depth": depth,
-            "blocking_summary": f"The frame uses single-subject blocking with {dominance}, suggesting focus on an individual presence within the scene.",
-        }
-
-    people_sorted = sorted(
-        people,
-        key=lambda d: d["box"][2] * d["box"][3],
-        reverse=True
-    )
-
-    p1 = people_sorted[0]
-    p2 = people_sorted[1]
-
-    x1, y1, w1, h1 = p1["box"]
-    x2, y2, w2, h2 = p2["box"]
-
-    c1 = np.array([x1 + w1 / 2, y1 + h1 / 2])
-    c2 = np.array([x2 + w2 / 2, y2 + h2 / 2])
-
-    distance = float(np.linalg.norm(c1 - c2) / frame_diagonal)
-
-    area1 = w1 * h1
-    area2 = w2 * h2
-    area_ratio = max(area1, area2) / max(min(area1, area2), 1)
-
-    if distance < 0.18:
-        relationship = "close spatial relationship"
-        blocking_type = "intimate / conversational blocking"
-    elif distance < 0.38:
-        relationship = "moderate spacing between characters"
-        blocking_type = "balanced two-person staging"
-    else:
-        relationship = "strong physical separation"
-        blocking_type = "separated / emotionally distant blocking"
-
-    dominance = (
-        "one subject visually dominates the frame"
-        if area_ratio > 2.0
-        else "subjects have relatively balanced visual weight"
-    )
-
-    depth = (
-        "foreground-background separation"
-        if area_ratio > 1.8
-        else "similar depth plane"
-    )
-
-    blocking_summary = (
-        f"The frame contains {len(people)} detected people with {relationship}. "
-        f"{dominance}, creating {blocking_type}."
-    )
-
-    return {
-        "blocking_type": blocking_type,
-        "relationship": relationship,
-        "dominance": dominance,
-        "depth": depth,
-        "blocking_summary": blocking_summary,
-    }
-
-
-def analyze_composition(frame, detections, quality_status):
-    h, w, _ = frame.shape
-    frame_area = w * h
-
-    if quality_status != "usable":
-        return {
-            "person_count": 0,
-            "subject_position": "unavailable",
-            "composition_type": "composition unavailable due to poor frame quality",
-            "framing_note": "unavailable",
-            "subject_area_ratio": 0.0,
-            "primary_box": None,
-            "detections": [],
-            "object_labels": []
-        }
-
-    person_detections = get_person_detections(detections)
-    primary_subject = get_primary_subject_box(person_detections)
-    object_labels = [d["label"] for d in detections if d["label"] != "person"]
-
-    if primary_subject is None:
-        return {
-            "person_count": 0,
-            "subject_position": "no reliable person detected",
-            "composition_type": "environment / object-focused composition",
-            "framing_note": "subject placement unavailable",
-            "subject_area_ratio": 0.0,
-            "primary_box": None,
-            "detections": detections,
-            "object_labels": object_labels
-        }
-
-    x, y, bw, bh = primary_subject["box"]
-    subject_center_x = x + bw / 2
-    subject_area_ratio = (bw * bh) / frame_area
-
-    if subject_center_x < w / 3:
-        subject_position = "left third"
-        composition_type = "rule-of-thirds composition"
-    elif subject_center_x > 2 * w / 3:
-        subject_position = "right third"
-        composition_type = "rule-of-thirds composition"
-    else:
-        subject_position = "center"
-        composition_type = "centered composition"
-
-    if subject_area_ratio < 0.12:
-        framing_note = "heavy negative space"
-    elif subject_area_ratio < 0.28:
-        framing_note = "moderate negative space"
-    else:
-        framing_note = "tight subject framing"
-
-    return {
-        "person_count": len(person_detections),
-        "subject_position": subject_position,
-        "composition_type": composition_type,
-        "framing_note": framing_note,
-        "subject_area_ratio": float(subject_area_ratio),
-        "primary_box": primary_subject["box"],
-        "detections": detections,
-        "object_labels": object_labels
-    }
-
-
-def analyze_mise_en_scene(frame, detections, composition, lighting, tone, quality_status):
-    if quality_status != "usable":
-        return {
-            "setting_type": "unavailable",
-            "visual_density": "unavailable",
-            "props_detected": [],
-            "subject_environment_relationship": "unavailable",
-            "mise_en_scene_summary": "Mise-en-scène analysis is unavailable because the frame quality is too poor."
-        }
-
-    h, w, _ = frame.shape
-    frame_area = w * h
-
-    object_detections = [d for d in detections if d["label"] != "person"]
-    object_labels = [d["label"] for d in object_detections]
-    unique_objects = sorted(set(object_labels))
-
-    object_area = sum(d["box"][2] * d["box"][3] for d in object_detections)
-    object_area_ratio = object_area / frame_area if frame_area > 0 else 0
-
-    indoor_objects = {
-        "chair", "couch", "bed", "dining table", "tv", "laptop",
-        "book", "clock", "vase", "refrigerator", "microwave", "oven"
-    }
-
-    outdoor_objects = {
-        "car", "truck", "bus", "traffic light", "stop sign",
-        "bicycle", "motorcycle", "bench", "boat"
-    }
-
-    if any(obj in indoor_objects for obj in object_labels):
-        setting_type = "interior / domestic or controlled space"
-    elif any(obj in outdoor_objects for obj in object_labels):
-        setting_type = "exterior / public or street-like space"
-    elif composition["person_count"] > 0 and len(object_labels) == 0:
-        setting_type = "minimal character-focused space"
-    else:
-        setting_type = "ambiguous or abstract environment"
-
-    if len(object_labels) <= 1 and object_area_ratio < 0.08:
-        visual_density = "minimal mise-en-scène"
-    elif len(object_labels) <= 4 and object_area_ratio < 0.22:
-        visual_density = "moderately detailed mise-en-scène"
-    else:
-        visual_density = "dense / cluttered mise-en-scène"
-
-    if composition["person_count"] == 0:
-        relationship = "environment carries the visual emphasis"
-    elif composition["framing_note"] == "tight subject framing":
-        relationship = "subject dominates over the environment"
-    elif composition["framing_note"] in ["heavy negative space", "moderate negative space"]:
-        relationship = "environment strongly shapes the subject's presence"
-    else:
-        relationship = "subject and environment feel visually balanced"
-
-    props_text = ", ".join(unique_objects[:5]) if unique_objects else "few or no clear props"
-
-    summary = (
-        f"The frame suggests a {setting_type} with {visual_density}. "
-        f"Detected props or objects include {props_text}. "
-        f"The {lighting} and {tone} color tone support the visual atmosphere. "
-        f"The subject-environment relationship suggests that {relationship}."
-    )
-
-    return {
-        "setting_type": setting_type,
-        "visual_density": visual_density,
-        "props_detected": unique_objects,
-        "subject_environment_relationship": relationship,
-        "mise_en_scene_summary": summary
-    }
-
-
-def interpret_visual_language(result):
-    shot = result["shot"]
-    lighting = result["lighting"]
-    tone = result["tone"]
-    composition = result["composition"]
-    blocking = result["blocking"]
-    mise = result["mise_en_scene"]
-    aspect = result["aspect_ratio"]
-    lighting_setup = result["lighting_setup"]
-
-    interpretation_parts = []
-
-    if shot == "close-up shot":
-        interpretation_parts.append("The close-up framing creates emotional emphasis and directs attention toward the subject.")
-    elif shot == "medium shot":
-        interpretation_parts.append("The medium framing balances character presence with surrounding context.")
-    elif shot == "wide shot":
-        interpretation_parts.append("The wide framing gives importance to space, environment, and spatial relationships.")
-
-    if lighting == "low-key dramatic lighting":
-        interpretation_parts.append("The low-key lighting adds tension, mystery, or dramatic weight.")
-    elif lighting == "high-key lighting":
-        interpretation_parts.append("The high-key lighting creates a cleaner, brighter, and more open feeling.")
-    elif lighting == "soft lighting":
-        interpretation_parts.append("The soft lighting creates a gentler, more intimate visual mood.")
-
-    interpretation_parts.append(
-        f"The lighting setup suggests a {lighting_setup['key_direction']} key light with {lighting_setup['fill_strength']}."
-    )
-
-    if tone == "warm":
-        interpretation_parts.append("The warm color tone can suggest intimacy, memory, comfort, heat, or emotional closeness.")
-    elif tone == "cool":
-        interpretation_parts.append("The cool color tone can suggest distance, melancholy, night, isolation, or restraint.")
-    else:
-        interpretation_parts.append("The neutral color tone keeps the image visually restrained and less emotionally exaggerated.")
-
-    if composition["composition_type"] == "rule-of-thirds composition":
-        interpretation_parts.append(
-            f"The subject placement on the {composition['subject_position']} creates directional visual tension and avoids a purely centered frame."
-        )
-    elif composition["composition_type"] == "centered composition":
-        interpretation_parts.append("The centered composition gives the subject visual authority, stillness, or formal emphasis.")
-
-    if blocking["blocking_type"] == "single-subject blocking":
-        interpretation_parts.append("The blocking isolates one subject, making the frame feel focused around individual presence.")
-    elif "two-person" in blocking["blocking_type"] or "conversational" in blocking["blocking_type"]:
-        interpretation_parts.append("The blocking creates a relationship between subjects, suggesting interaction or emotional exchange.")
-    elif "separated" in blocking["blocking_type"]:
-        interpretation_parts.append("The physical separation between subjects may suggest emotional distance or conflict.")
-
-    if mise["visual_density"] == "minimal mise-en-scène":
-        interpretation_parts.append("The minimal mise-en-scène keeps attention on subject, mood, and composition rather than props.")
-    elif mise["visual_density"] == "dense / cluttered mise-en-scène":
-        interpretation_parts.append("The dense mise-en-scène creates a more textured, busy, or environment-driven frame.")
-
-    interpretation_parts.append(aspect["interpretation"])
-
-    return " ".join(interpretation_parts)
-
-
-def interpret_clip_visual_language(frame_results):
-    usable = [r for r in frame_results if r["quality_status"] == "usable"]
-
-    if not usable:
-        return "The sampled frames are not visually reliable enough for a clip-level interpretation."
-
-    dominant_shot = Counter([r["shot"] for r in usable]).most_common(1)[0][0]
-    dominant_lighting = Counter([r["lighting"] for r in usable]).most_common(1)[0][0]
-    dominant_tone = Counter([r["tone"] for r in usable]).most_common(1)[0][0]
-    dominant_composition = Counter([r["composition"]["composition_type"] for r in usable]).most_common(1)[0][0]
-    dominant_blocking = Counter([r["blocking"]["blocking_type"] for r in usable]).most_common(1)[0][0]
-    dominant_mise = Counter([r["mise_en_scene"]["visual_density"] for r in usable]).most_common(1)[0][0]
-    dominant_format = Counter([r["aspect_ratio"]["format_type"] for r in usable]).most_common(1)[0][0]
-    dominant_key = Counter([r["lighting_setup"]["key_direction"] for r in usable]).most_common(1)[0][0]
-
-    return (
-        f"Across the sampled frames, the clip mainly uses {dominant_shot}, {dominant_lighting}, "
-        f"and a {dominant_tone} palette. The dominant frame format is {dominant_format}, "
-        f"while the composition tends toward {dominant_composition}. The blocking pattern reads as "
-        f"{dominant_blocking}, and the mise-en-scène appears {dominant_mise}. The inferred lighting "
-        f"often suggests a {dominant_key} key-light direction. Together, these choices suggest a controlled "
-        f"visual design where framing, lighting, color, and staging work together to shape the scene's mood and viewer attention."
-    )
-
-
-def draw_rule_of_thirds_grid(frame):
-    annotated = frame.copy()
-    h, w, _ = annotated.shape
-
-    x1 = w // 3
-    x2 = 2 * w // 3
-    y1 = h // 3
-    y2 = 2 * h // 3
-
-    line_color = (255, 255, 255)
-    thickness = max(2, w // 400)
-
-    cv2.line(annotated, (x1, 0), (x1, h), line_color, thickness)
-    cv2.line(annotated, (x2, 0), (x2, h), line_color, thickness)
-    cv2.line(annotated, (0, y1), (w, y1), line_color, thickness)
-    cv2.line(annotated, (0, y2), (w, y2), line_color, thickness)
-
-    return annotated
-
-
-def analyze_single_frame(frame, classifier, yolo_model):
-    quality_status, _, _ = get_frame_quality(frame)
-    image = Image.fromarray(frame)
-
-    if quality_status == "unusable_black_frame":
-        shot_results = [{"label": "unavailable", "score": 0.0}]
-        shot = "unavailable"
-        shot_score = 0.0
-    else:
-        shot_results = classify_shot(image, classifier)
-        shot = shot_results[0]["label"]
-        shot_score = shot_results[0]["score"]
-
-    lighting, mean, contrast, dark = analyze_lighting(frame)
-    lighting_setup = infer_lighting_setup(frame, lighting, mean, contrast, dark)
-    aspect_ratio = analyze_aspect_ratio(frame)
-    colors, percentages = extract_colors(frame, k=6)
-    tone = analyze_color_tone(colors, percentages)
-
-    detections = detect_objects_yolo(frame, yolo_model) if quality_status == "usable" else []
-
-    composition = analyze_composition(frame, detections, quality_status)
-    blocking = analyze_blocking(frame, detections, quality_status)
-    mise_en_scene = analyze_mise_en_scene(frame, detections, composition, lighting, tone, quality_status)
-    symmetry_label, symmetry_score = analyze_symmetry(frame, quality_status)
-
-    result = {
-        "frame": frame,
-        "quality_status": quality_status,
-        "shot_results": shot_results,
-        "shot": shot,
-        "shot_score": shot_score,
-        "lighting": lighting,
-        "lighting_setup": lighting_setup,
-        "mean_brightness": mean,
-        "contrast": contrast,
-        "dark_ratio": dark,
-        "aspect_ratio": aspect_ratio,
-        "colors": [tuple(map(int, c)) for c in colors],
-        "proportions": [float(p) for p in percentages],
-        "tone": tone,
-        "composition": composition,
-        "blocking": blocking,
-        "mise_en_scene": mise_en_scene,
-        "symmetry_label": symmetry_label,
-        "symmetry_score": symmetry_score,
-    }
-
-    result["visual_interpretation"] = interpret_visual_language(result)
-    return result
-
-
-def aggregate_clip_palette(frame_results, num_colors=6):
-    all_colors = []
-    usable_results = [r for r in frame_results if r["quality_status"] == "usable"]
-
-    if not usable_results:
-        return [(0, 0, 0)] * num_colors, [1 / num_colors] * num_colors
-
-    for result in usable_results:
-        for color, proportion in zip(result["colors"], result["proportions"]):
-            repeat_count = max(1, int(proportion * 100))
-            all_colors.extend([color] * repeat_count)
-
-    all_colors = np.array(all_colors, dtype=np.uint8)
-
-    kmeans = KMeans(n_clusters=num_colors, n_init=10, random_state=42)
-    labels = kmeans.fit_predict(all_colors)
-    centers = kmeans.cluster_centers_.astype(int)
-
-    counts = np.bincount(labels)
-    proportions = counts / counts.sum()
-
-    idx = np.argsort(proportions)[::-1]
-    colors = [tuple(centers[i]) for i in idx]
-    proportions = [float(proportions[i]) for i in idx]
-
-    return colors, proportions
-
-
-def infer_mood(dominant_shot, dominant_lighting, dominant_tone):
-    if dominant_lighting == "low-key dramatic lighting" and dominant_tone == "cool":
-        return "moody, tense, and nocturnal"
-    if dominant_lighting == "high-key lighting" and dominant_tone == "warm":
-        return "bright, inviting, and energetic"
-    if dominant_lighting == "soft lighting" and dominant_tone == "warm":
-        return "gentle, intimate, and calm"
-    if dominant_shot == "close-up shot" and dominant_lighting == "low-key dramatic lighting":
-        return "intense and emotionally focused"
-    if dominant_shot == "wide shot" and dominant_tone == "cool":
-        return "atmospheric and spatially distant"
-    return "cinematic and visually controlled"
-
-
-def generate_summary(
-    dominant_shot,
-    dominant_lighting,
-    dominant_tone,
-    palette_names,
-    mood,
-    dominant_composition=None,
-    dominant_blocking=None,
-    dominant_mise_en_scene=None,
-    dominant_format=None,
-    dominant_key_light=None
-):
-    palette_text = ", ".join(palette_names[:4])
-
-    composition_text = f" The framing often uses {dominant_composition}." if dominant_composition else ""
-    blocking_text = f" The blocking suggests {dominant_blocking}." if dominant_blocking else ""
-    mise_text = f" The mise-en-scène appears {dominant_mise_en_scene}." if dominant_mise_en_scene else ""
-    format_text = f" The frame geometry reads as {dominant_format}." if dominant_format else ""
-    lighting_text = f" The lighting setup suggests a {dominant_key_light} key direction." if dominant_key_light else ""
-
-    return (
-        f"This visual predominantly uses {dominant_shot}, {dominant_lighting}, "
-        f"and a {dominant_tone}-toned palette built around {palette_text}. "
-        f"Overall, it feels {mood}.{format_text}{lighting_text}{composition_text}{blocking_text}{mise_text}"
-    )
-
-
-def metric_card(title, value):
-    st.markdown(
-        f"""
-        <div style="
-            padding: 14px 16px;
-            border: 1px solid rgba(255,255,255,0.18);
-            border-radius: 12px;
-            margin-bottom: 12px;
-            background-color: rgba(255,255,255,0.04);
-        ">
-            <div style="font-size: 13px; opacity: 0.70; margin-bottom: 4px;">
-                {title}
-            </div>
-            <div style="font-size: 17px; font-weight: 600;">
-                {value}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-
-def create_report_text(title, summary, visual_interpretation, movie_data=None):
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-
-    report = f"""
-CINEMATIC SCENE UNDERSTANDING AI
-Generated: {now}
-
-TITLE
-{title}
-"""
-
-    if movie_data:
-        report += f"""
-
-FILM KNOWLEDGE
-Film: {movie_data.get('Title', 'N/A')}
-Year: {movie_data.get('Year', 'N/A')}
-Director: {movie_data.get('Director', 'N/A')}
-Genre: {movie_data.get('Genre', 'N/A')}
-Runtime: {movie_data.get('Runtime', 'N/A')}
-IMDb Rating: {movie_data.get('imdbRating', 'N/A')}
-
-Story Context:
-{movie_data.get('Plot', 'N/A')}
-"""
-
-    report += f"""
-
-SCENE SUMMARY
-{summary}
-
-VISUAL INTERPRETATION
-{visual_interpretation}
-
-NOTE
-This report is an AI-assisted visual interpretation. It should be treated as a film-study aid, not an absolute truth about the production.
-"""
-
-    return report.strip()
-
-
-def display_frame_analysis(result):
-    st.image(result["frame"], caption="Analyzed frame", use_container_width=True)
-
-    if result["quality_status"] == "unusable_black_frame":
-        st.warning("This frame is too dark for reliable visual analysis.")
-        return
-
-    if result["quality_status"] == "too_dark_to_analyze_reliably":
-        st.warning("This frame is very dark, so some analysis may be less reliable.")
-
-    composition = result["composition"]
-    blocking = result["blocking"]
-    mise = result["mise_en_scene"]
-    aspect = result["aspect_ratio"]
-    lighting_setup = result["lighting_setup"]
-
-    st.markdown("### Cinematic Breakdown")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        metric_card("Shot", result["shot"])
-        metric_card("Lighting", result["lighting"])
-        metric_card("Color Tone", result["tone"])
-        metric_card("Frame Format", aspect["format_type"])
-        metric_card("Composition", composition["composition_type"])
-
-    with col2:
-        metric_card("Subject Placement", composition["subject_position"])
-        metric_card("People Detected", composition["person_count"])
-        metric_card("Framing", composition["framing_note"])
-        metric_card("Blocking", blocking["blocking_type"])
-        metric_card("Visual Density", mise["visual_density"])
-
-    st.markdown("### Lighting Read")
-
-    col3, col4 = st.columns(2)
-
-    with col3:
-        metric_card("Likely Key Direction", lighting_setup["key_direction"])
-        metric_card("Fill", lighting_setup["fill_strength"])
-
-    with col4:
-        metric_card("Shadow Style", lighting_setup["shadow_style"])
-        metric_card("Practical Source", lighting_setup["practical_guess"])
-
-    st.info(lighting_setup["setup_summary"])
-
-    st.markdown("### Visual Interpretation")
-    st.info(result["visual_interpretation"])
-
-    st.markdown("### Frame Geometry")
-    st.info(aspect["interpretation"])
-
-    st.markdown("### Blocking")
-    st.info(blocking["blocking_summary"])
-
-    st.markdown("### Mise-en-scène")
-    metric_card("Setting", mise["setting_type"])
-    metric_card("Subject-Environment Relationship", mise["subject_environment_relationship"])
-
-    if mise["props_detected"]:
-        st.write("**Visible objects / props:**", ", ".join(mise["props_detected"]))
-
-    st.info(mise["mise_en_scene_summary"])
-
-    st.markdown("### Dominant Color Palette")
-    show_palette(result["colors"], result["proportions"])
-
-    if composition["composition_type"] == "rule-of-thirds composition":
-        with st.expander("Show rule-of-thirds guide"):
-            grid_image = draw_rule_of_thirds_grid(result["frame"])
-            st.image(grid_image, caption="Rule-of-thirds guide", use_container_width=True)
-
-
-classifier = load_classifier()
-yolo_model = load_yolo_model()
-
-st.markdown("## Start Analysis")
-mode = st.radio(
-    "Choose what you want to analyze:",
-    ["Analyze Video Clip", "Analyze Single Still / Photo"]
+    <style>
+      .scene-card {
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 12px; padding: 14px 16px; height: 100%;
+      }
+      .scene-card .label {
+        font-size: 0.72rem; letter-spacing: .08em; text-transform: uppercase;
+        opacity: .55; margin-bottom: 4px;
+      }
+      .scene-card .value { font-size: 1.05rem; font-weight: 600; line-height: 1.3; }
+      .mini-label {
+        font-size:.72rem; letter-spacing:.08em; text-transform:uppercase; opacity:.55;
+      }
+      .swatch-row { display: flex; gap: 8px; margin-top: 6px; }
+      .swatch-wrap { flex: 1; text-align: center; }
+      .swatch { height: 48px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.12); }
+      .swatch-name { font-size:.74rem; opacity:.7; margin-top:4px; text-transform:capitalize; }
+      .chat-zone {
+        border: 1px solid rgba(120,160,255,0.35);
+        background: rgba(90,130,255,0.06);
+        border-radius: 14px; padding: 18px 20px; margin-top: 6px;
+      }
+      .chat-zone h3 { margin-top: 0; }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
-if mode == "Analyze Video Clip":
-    uploaded_video = st.file_uploader(
-        "Upload a short video clip",
-        type=["mp4", "mov", "avi", "mkv"]
+
+# --------------------------------------------------------------------------
+# Pipeline
+# --------------------------------------------------------------------------
+@st.cache_resource(show_spinner=False)
+def _models():
+    return load_shot_classifier(), load_yolo()
+
+
+def run_vision_pipeline(frames: list[np.ndarray], source_type: str):
+    classifier, yolo = _models()
+    frame_features = [analyze_frame(f, classifier, yolo) for f in frames]
+    return aggregate(frame_features, source_type)
+
+
+def load_frames(upload) -> tuple[list[np.ndarray], str]:
+    name = upload.name.lower()
+    ext = name[name.rfind("."):]
+    if ext in VIDEO_EXTS:
+        data = upload.read()
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
+        try:
+            tmp.write(data)
+            tmp.flush()
+            tmp.close()
+            frames = extract_frames(tmp.name, num_frames=5)
+        finally:
+            os.unlink(tmp.name)
+        return frames, "video"
+    image = np.array(Image.open(upload).convert("RGB"))
+    return [image], "image"
+
+
+# --------------------------------------------------------------------------
+# State
+# --------------------------------------------------------------------------
+for key, default in [
+    ("features", None), ("frames", None), ("report", None),
+    ("sources", None), ("chat", []), ("pending_q", None),
+]:
+    if key not in st.session_state:
+        st.session_state[key] = default
+
+
+def reset_analysis():
+    st.session_state.features = None
+    st.session_state.frames = None
+    st.session_state.report = None
+    st.session_state.sources = None
+    st.session_state.chat = []
+    st.session_state.pending_q = None
+
+
+# --------------------------------------------------------------------------
+# Sidebar
+# --------------------------------------------------------------------------
+with st.sidebar:
+    st.header("Setup")
+    model = st.text_input("Ollama reasoning model", value=CHAT_MODEL)
+    st.caption("Ollama must be running and the index must be built.")
+    st.divider()
+    st.markdown(
+        "**How it works**\n\n"
+        "1. The clip is sampled into 5 frames\n"
+        "2. Each frame is measured (shot, light, color, staging)\n"
+        "3. Features route to relevant film-theory notes\n"
+        "4. A local LLM writes a grounded, cited reading"
     )
 
-    if uploaded_video is not None:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
-            tmp.write(uploaded_video.read())
-            path = tmp.name
 
-        st.video(uploaded_video)
-        st.success("Video uploaded successfully. Analyzing representative frames...")
+# --------------------------------------------------------------------------
+# Header + upload
+# --------------------------------------------------------------------------
+st.title("Cinematic Scene Understanding — RAG")
+st.write(
+    "Upload a film still or short clip. The system samples and measures it, "
+    "then grounds its interpretation in a cinematography knowledge base."
+)
 
-        frames = extract_frames(path, num_frames=5)
+upload = st.file_uploader(
+    "Scene (image or video)",
+    type=["png", "jpg", "jpeg", "mp4", "mov", "avi", "mkv", "m4v"],
+)
 
-        if frames:
-            frame_results = [
-                analyze_single_frame(frame, classifier, yolo_model)
-                for frame in frames
-            ]
-
-            usable_results = [
-                result for result in frame_results
-                if result["quality_status"] == "usable"
-            ]
-
-            st.subheader("Clip-Level Summary")
-
-            summary_source = usable_results if usable_results else frame_results
-
-            dominant_shot = Counter([r["shot"] for r in summary_source]).most_common(1)[0][0]
-            dominant_lighting = Counter([r["lighting"] for r in summary_source]).most_common(1)[0][0]
-            dominant_tone = Counter([r["tone"] for r in summary_source]).most_common(1)[0][0]
-            dominant_composition = Counter([r["composition"]["composition_type"] for r in summary_source]).most_common(1)[0][0]
-            dominant_blocking = Counter([r["blocking"]["blocking_type"] for r in summary_source]).most_common(1)[0][0]
-            dominant_mise = Counter([r["mise_en_scene"]["visual_density"] for r in summary_source]).most_common(1)[0][0]
-            dominant_format = Counter([r["aspect_ratio"]["format_type"] for r in summary_source]).most_common(1)[0][0]
-            dominant_key_light = Counter([r["lighting_setup"]["key_direction"] for r in summary_source]).most_common(1)[0][0]
-
-            clip_colors, clip_proportions = aggregate_clip_palette(frame_results)
-            palette_names = simplify_hex_names(clip_colors)
-
-            mood = infer_mood(dominant_shot, dominant_lighting, dominant_tone)
-            clip_interpretation = interpret_clip_visual_language(frame_results)
-
-            summary = generate_summary(
-                dominant_shot,
-                dominant_lighting,
-                dominant_tone,
-                palette_names,
-                mood,
-                dominant_composition,
-                dominant_blocking,
-                dominant_mise,
-                dominant_format,
-                dominant_key_light
-            )
-
-            col1, col2 = st.columns([1.2, 1])
-
-            with col1:
-                metric_card("Dominant Shot", dominant_shot)
-                metric_card("Dominant Lighting", dominant_lighting)
-                metric_card("Dominant Color Tone", dominant_tone)
-                metric_card("Frame Format", dominant_format)
-                metric_card("Overall Mood", mood)
-
-            with col2:
-                st.write("**Clip Palette**")
-                show_palette(clip_colors, clip_proportions, height=55)
-
-            st.markdown("### Scene Summary")
-            st.info(summary)
-
-            st.markdown("### Visual Interpretation")
-            st.info(clip_interpretation)
-
-            report_title = movie_data.get("Title", "Video Clip Analysis") if movie_data else "Video Clip Analysis"
-            report_text = create_report_text(
-                report_title,
-                summary,
-                clip_interpretation,
-                movie_data
-            )
-
-            st.download_button(
-                label="Download Cinematic Report",
-                data=report_text,
-                file_name=f"{safe_filename(report_title)}_cinematic_report.txt",
-                mime="text/plain"
-            )
-
-            st.markdown("---")
-            st.subheader("Frame-by-Frame Analysis")
-
-            for i, result in enumerate(frame_results):
-                st.write(f"### Frame {i + 1}")
-                display_frame_analysis(result)
-                st.markdown("---")
-
+if upload is not None:
+    media_col, run_col = st.columns([3, 1])
+    with media_col:
+        if upload.type.startswith("image"):
+            st.image(upload, use_container_width=True)
         else:
-            st.error("Could not extract frames from this video.")
+            st.video(upload)
+    with run_col:
+        if st.button("Analyze scene", type="primary", use_container_width=True):
+            reset_analysis()
+            with st.spinner("Sampling and measuring the scene..."):
+                upload.seek(0)
+                frames, source_type = load_frames(upload)
+                if not frames:
+                    st.error("Could not read any frames from that file.")
+                else:
+                    st.session_state.frames = frames
+                    st.session_state.features = run_vision_pipeline(frames, source_type)
+            if st.session_state.features is not None:
+                with st.spinner("Grounding interpretation in film theory..."):
+                    result = analyze(st.session_state.features, model=model)
+                    st.session_state.report = result.interpretation
+                    st.session_state.sources = result.sources
 
-        os.remove(path)
+
+# --------------------------------------------------------------------------
+# Results
+# --------------------------------------------------------------------------
+features = st.session_state.features
 
 
-if mode == "Analyze Single Still / Photo":
-    uploaded_image = st.file_uploader(
-        "Upload a still image, screenshot, or photo",
-        type=["jpg", "jpeg", "png", "webp"]
-    )
+def card(label: str, value: str) -> str:
+    return f"<div class='scene-card'><div class='label'>{label}</div><div class='value'>{value}</div></div>"
 
-    if uploaded_image is not None:
-        image = Image.open(uploaded_image).convert("RGB")
-        frame = np.array(image)
 
-        result = analyze_single_frame(frame, classifier, yolo_model)
+def run_question(question: str, model: str):
+    st.session_state.chat.append({"role": "user", "content": question})
+    with st.chat_message("user"):
+        st.write(question)
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            result = analyze(
+                features, question=question,
+                history=st.session_state.chat[:-1], model=model,
+            )
+        st.write(result.interpretation)
+    st.session_state.chat.append({"role": "assistant", "content": result.interpretation})
 
-        palette_names = simplify_hex_names(result["colors"])
-        mood = infer_mood(result["shot"], result["lighting"], result["tone"])
 
-        summary = generate_summary(
-            result["shot"],
-            result["lighting"],
-            result["tone"],
-            palette_names,
-            mood,
-            result["composition"]["composition_type"],
-            result["blocking"]["blocking_type"],
-            result["mise_en_scene"]["visual_density"],
-            result["aspect_ratio"]["format_type"],
-            result["lighting_setup"]["key_direction"]
+if features is not None:
+    st.divider()
+
+    # Frames analysed — proves the 5-frame sampling and shows the arc
+    if features.source_type == "video" and st.session_state.frames:
+        st.subheader(f"Frames analysed ({features.usable_frame_count}/{features.frame_count} usable)")
+        cols = st.columns(len(st.session_state.frames))
+        for col, frame, ff in zip(cols, st.session_state.frames, features.frames):
+            with col:
+                st.image(frame, use_container_width=True)
+                st.caption(f"{ff.shot} · {ff.lighting}".replace(" lighting", ""))
+
+    # Scene profile
+    st.subheader("Scene profile")
+    r1 = st.columns(3)
+    r1[0].markdown(card("Shot", features.dominant_shot), unsafe_allow_html=True)
+    r1[1].markdown(card("Lighting", features.dominant_lighting), unsafe_allow_html=True)
+    r1[2].markdown(card("Color tone", features.dominant_tone.title()), unsafe_allow_html=True)
+    st.write("")
+    r2 = st.columns(3)
+    r2[0].markdown(card("Composition", features.dominant_composition), unsafe_allow_html=True)
+    r2[1].markdown(card("Blocking", features.dominant_blocking), unsafe_allow_html=True)
+    r2[2].markdown(card("Format", features.dominant_format), unsafe_allow_html=True)
+
+    if features.palette_hex:
+        st.write("")
+        st.markdown("<div class='mini-label'>Palette</div>", unsafe_allow_html=True)
+        swatches = "".join(
+            f"<div class='swatch' style='flex:1;background:{h}' title='{h}'></div>"
+            for h in features.palette_hex
         )
-
-        st.subheader("Still / Photo Analysis")
-        display_frame_analysis(result)
-
-        st.markdown("### Visual Summary")
-        st.info(summary)
-
-        report_title = movie_data.get("Title", "Still Image Analysis") if movie_data else "Still Image Analysis"
-        report_text = create_report_text(
-            report_title,
-            summary,
-            result["visual_interpretation"],
-            movie_data
+        st.markdown(f"<div class='swatch-row'>{swatches}</div>", unsafe_allow_html=True)
+        groups = features.palette_groups()
+        pills = "".join(
+            f"<span style='display:inline-block;padding:4px 12px;margin:6px 6px 0 0;"
+            f"border-radius:999px;background:rgba(255,255,255,0.06);"
+            f"border:1px solid rgba(255,255,255,0.12);font-size:.82rem;"
+            f"text-transform:capitalize'>{g['label']} · {round(g['share']*100)}%</span>"
+            for g in groups
         )
+        st.markdown(f"<div style='margin-top:8px'>{pills}</div>", unsafe_allow_html=True)
+        st.caption(f"Palette reads as {features.palette_summary()}.")
 
-        st.download_button(
-            label="Download Cinematic Report",
-            data=report_text,
-            file_name=f"{safe_filename(report_title)}_cinematic_report.txt",
-            mime="text/plain"
-        )
+    if features.detected_objects:
+        st.caption("Detected in frame: " + ", ".join(features.detected_objects))
+
+    # Grounded interpretation — centerpiece
+    if st.session_state.report:
+        st.subheader("Grounded interpretation")
+        st.write(st.session_state.report)
+        with st.expander("Sources this reading draws on"):
+            for s in st.session_state.sources or []:
+                st.markdown(f"- **{s['title']}** — {s['domain']} ({s['license']})")
+
+    # ---- Chat: the showpiece ----
+    st.markdown("<div class='chat-zone'>", unsafe_allow_html=True)
+    st.markdown("### Ask the scene")
+    st.caption("This is the interactive part — ask anything about the cinematography and it answers, grounded in film theory.")
+
+    suggestions = [
+        "How does the lighting change across the clip?",
+        "Why does this scene feel the way it does?",
+        "What would warmer lighting change?",
+    ]
+    sug_cols = st.columns(len(suggestions))
+    for c, s in zip(sug_cols, suggestions):
+        if c.button(s, use_container_width=True):
+            st.session_state.pending_q = s
+
+    for turn in st.session_state.chat:
+        with st.chat_message(turn["role"]):
+            st.write(turn["content"])
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    typed = st.chat_input("Ask about this scene...")
+    question = typed or st.session_state.pop("pending_q", None)
+    if question:
+        run_question(question, model)

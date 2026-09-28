@@ -1,8 +1,18 @@
+# --- Phase 1: vision pipeline (your existing stack) ---
 streamlit
 opencv-python
 numpy
-pillow
+Pillow
+scikit-learn
 transformers
 torch
-scikit-learn
+ultralytics
 requests
+
+# --- Phase 2-3: local RAG + agent (added next) ---
+langchain
+langchain-community
+langchain-ollama
+pyyaml
+chromadb
+ollama
